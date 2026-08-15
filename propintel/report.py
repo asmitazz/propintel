@@ -346,13 +346,8 @@ def _summary_section(recs: list[dict], trends: dict, proj: dict) -> str:
     def jump(pg, label):
         return f'<button class="jump" onclick="showPage(\'{pg}\')">{label} →</button>'
 
-    return f'''<h2>Executive summary</h2>
+    return f'''<h2>Today's shortlist</h2>
     {_sersi_update()}
-    <p class="sub">The whole picture on one page — the shortlist, the macro read, and the forward outlook. Jump into any tab for the detail behind each point.</p>
-
-    <div class="panel">
-      <p class="m-detail"><b>The approach:</b> every Australian suburb (SA2) is scored on the fundamentals that drive capital growth <i>before</i> price moves — yield, gentrification (low socio-economic base rising, confirmed by incomes outpacing the state), ripple/arbitrage vs richer neighbours, migration, affordability, industry diversity and supply scarcity — then oversupplied greenfield estates are ruled out (&gt;8% approvals within 5km). 100% free public data (ABS + valuers-general); no listings, Domain-free.</p>
-    </div>
 
     <div class="stat-row">
       <div class="stat"><div class="v">{len(recs):,}</div><div class="l">suburbs scored · {jump("shortlist","Shortlist")}</div></div>
@@ -366,6 +361,10 @@ def _summary_section(recs: list[dict], trends: dict, proj: dict) -> str:
 
     <h3 class="ph">Top townhouses / villas under $1M {jump("shortlist","full list")}</h3>
     <div class="tablewrap"><table style="min-width:720px"><thead><tr><th>Suburb</th><th>St</th><th class="num">Price (est)</th><th class="num">Yield</th><th class="num">Proj 10yr</th><th>Cycle</th><th class="num">Score</th></tr></thead><tbody>{pick_rows(tt,"townhouse")}</tbody></table></div>
+
+    <div class="panel" style="margin-top:16px">
+      <p class="m-detail"><b>How Sersi picks these:</b> every Australian suburb (SA2) is scored on the fundamentals that drive capital growth <i>before</i> price moves — yield, gentrification (low socio-economic base rising, confirmed by incomes outpacing the state), ripple/arbitrage vs richer neighbours, migration, affordability, industry diversity and supply scarcity — then oversupplied greenfield estates are ruled out (&gt;8% approvals within 5km). 100% free public data (ABS + valuers-general); no listings, Domain-free.</p>
+    </div>
 
     <div class="grid2" style="margin-top:16px">
       <div class="panel">
@@ -794,8 +793,8 @@ h3.ph{{font-size:14px;color:var(--muted);text-transform:uppercase;letter-spacing
 .page{{display:none}} .page.active{{display:block}}
 /* Mobile: same bar, but swipe sideways instead of wrapping */
 @media(max-width:760px){{
-  .sidebar{{flex-wrap:nowrap;overflow-x:auto;-webkit-overflow-scrolling:touch;box-shadow:0 2px 8px rgba(0,0,0,.06)}}
-  .ptab{{flex:0 0 auto}}
+  .sidebar{{flex-wrap:wrap;overflow:visible;gap:5px;padding:8px 0;box-shadow:0 2px 8px rgba(0,0,0,.06)}}
+  .ptab{{flex:0 0 auto;padding:6px 10px;font-size:12.5px}}
 }}
 /* Floating back-to-top */
 .totop{{position:fixed;right:16px;bottom:16px;width:46px;height:46px;border-radius:50%;background:var(--accent);color:#fff;border:none;font-size:20px;line-height:1;cursor:pointer;box-shadow:0 3px 12px rgba(0,0,0,.28);opacity:0;pointer-events:none;transition:opacity .2s;z-index:40}}
@@ -868,17 +867,15 @@ details{{margin-top:10px}} summary{{cursor:pointer;color:var(--accent);font-size
 <button class="totop" id="toTop" onclick="window.scrollTo({{top:0,behavior:'smooth'}})" aria-label="Back to top" title="Back to top">↑</button>
 <div class="wrap">
   <header class="hero">
-    <div class="kicker">PropIntel · Macro-Fundamentals Growth Map</div>
-    <h1>Where Australia's next capital growth is being built — 100% public data, no listings</h1>
-    <p class="lede">Every Australian suburb (SA2) scored on the fundamentals that drive capital growth <b>before price moves</b>: yield, population growth, net migration, affordability, supply scarcity, industry diversity and jobs — from ABS + state valuers-general. Switch between the <b>Houses</b> and <b>Townhouses/Villas</b> strategies, then filter by budget (now up to $1M).</p>
-    <div class="meta">Generated {generated} · Up to $1M · Source: ABS Data by Region, ERP · Domain-free</div>
+    <div class="kicker">🛰 Sersi · Australian property research agent</div>
+    <h1>Where Australia's next capital growth is being built</h1>
+    <p class="lede"><b>Sersi is an automated agent</b> that scores every Australian suburb on the fundamentals that drive capital growth <b>before price moves</b> — refreshed daily from public ABS data, the government funding/jobs pipeline and live news. Start with the shortlist below, or jump to any tab.</p>
+    <div class="meta">Updated {generated} · public data only · not financial advice — see footer</div>
   </header>
 
-  <div class="banner">⚠️ <b>Not financial advice — and prices are indicative only.</b> They are <b>ABS SA2-area sold medians (2024)</b> escalated ~2.5yr to today, so they read <b>below realestate.com.au</b> (which shows named-suburb asking/AVM) and can be off by 10–20% for any single suburb. <b>Rank suburbs on the fundamentals; verify the live median via the link in each lookup before acting.</b> Accurate current medians need a paid live source (Domain <i>Business</i> plan or CoreLogic/Cotality) — the free tier only has listings.</div>
 
   <div class="lookup">
     <input id="q" type="text" placeholder="🔎 Look up any suburb — type a name (e.g. Geelong, Lara, Broadmeadows)…" oninput="doLookup(this.value)" autocomplete="off">
-    <div class="pricebasis">💡 Prices are <b>ABS SA2-area sold-transfer medians</b> (whole statistical area, not a single named suburb), 2024 vintage escalated to ~now. They typically read <b>below realestate.com.au</b>, which shows named-suburb asking/AVM figures — each lookup has a one-click link to verify the live median. Use these for <b>relative ranking</b>; confirm the absolute number before buying.</div>
     <div id="lookupResults"></div>
   </div>
 
@@ -932,7 +929,12 @@ details{{margin-top:10px}} summary{{cursor:pointer;color:var(--accent);font-size
   </div><!--content-->
   </div><!--layout-->
 
-  <div class="foot">PropIntel · local build · {generated}. Population &amp; regional data © Australian Bureau of Statistics (ABS Data API, "Data by Region"). Policy &amp; catalyst figures from cited government/industry sources. General information only — not personal financial or investment advice.</div>
+  <div class="foot">
+    <p><b>What Sersi is:</b> an automated research agent that ranks Australian suburbs on the macro fundamentals that drive capital growth, rebuilt daily from 100% free public data (ABS + state valuers-general) — no listings, Domain-free.</p>
+    <p><b>Not financial advice.</b> General information only, not personal financial or investment advice. Do your own research and seek licensed advice before acting.</p>
+    <p><b>About the prices:</b> figures are <b>ABS SA2-area sold-transfer medians</b> (a whole statistical area, not one named suburb), 2024 vintage escalated ~2.5yr to today. They typically read <b>below realestate.com.au</b> (named-suburb asking/AVM) and can be off 10–20% for a single suburb, so use them for <b>relative ranking</b> and verify the live median via the link in each lookup before acting. Accurate current medians need a paid source (Domain <i>Business</i> plan or CoreLogic/Cotality) — the free tier only carries listings.</p>
+    <p>Updated {generated}. Population &amp; regional data © Australian Bureau of Statistics (ABS Data API, "Data by Region"). Policy &amp; catalyst figures from cited government/industry sources.</p>
+  </div>
 </div>
 <script>
 var LOOKUP = {lookupdata};
