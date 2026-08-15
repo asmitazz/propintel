@@ -27,3 +27,6 @@ venv/
 
 # Copyrighted / third-party documents — never publish
 *.pdf
+
+# Local Claude Code config — not for the public repo
+.claude/
