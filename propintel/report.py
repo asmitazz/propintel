@@ -736,6 +736,7 @@ def build():
         n_gentrify=n_gentrify, n_ruled=n_ruled, n_hotspot=n_hotspot,
         generated=data["generated"][:10],
     )
+    OUTPUT.parent.mkdir(parents=True, exist_ok=True)   # reports/ isn't tracked in git
     OUTPUT.write_text(html)
     return OUTPUT
 
