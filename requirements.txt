@@ -1,0 +1,6 @@
+# PropIntel — Australian property investment intelligence
+# Python 3.10+
+curl_cffi>=0.6      # browser-TLS HTTP client (Domain sits behind Akamai; plain requests is blocked)
+PyYAML>=6.0         # config.yaml
+python-dateutil>=2.8
+tabulate>=0.9       # pretty CLI tables

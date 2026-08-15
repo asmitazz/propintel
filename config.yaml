@@ -1,0 +1,48 @@
+# PropIntel configuration — edit to change your investment thesis.
+# Everything the ranking engine and listing pull use is driven from here.
+
+# --- What you're buying ---------------------------------------------------
+criteria:
+  max_price: 600000          # AUD ceiling
+  min_price: 0
+  property_types:            # Domain API propertyType values
+    - House
+    - Townhouse
+    - Villa
+    - Duplex
+    - SemiDetached
+  min_bedrooms: 2            # used for suburb-performance median matching
+  listing_type: Sale
+
+# --- Where to look --------------------------------------------------------
+# Nationwide scan. States are ranked on macro fundamentals first; listings are
+# pulled ONLY for the top shortlisted suburbs (keeps API usage low & sustainable).
+scan:
+  states: [NSW, VIC, QLD, SA, WA, TAS, NT, ACT]
+  shortlist_size: 25         # how many top-ranked SA2s to pull live listings for
+  # A suburb must be at least this "affordable" to bother pulling listings:
+  # its house median (from Domain suburb performance) must be <= this.
+  max_suburb_median: 650000
+
+# --- Ranking weights (capital-growth-potential score, must sum to ~1.0) ----
+# Each component is normalised 0..1 across all suburbs, then weighted.
+ranking:
+  weights:
+    population_growth: 0.25   # ABS ERP — demand tailwind
+    net_migration:     0.15   # ABS regional migration — who's moving in
+    price_momentum:    0.15   # Domain suburb performance — recent growth trend
+    rental_yield:      0.15   # Domain suburb performance — income + investor demand
+    affordability:     0.15   # median price vs income — runway for growth
+    supply_pressure:   0.15   # ABS building approvals (inverted) — scarcity is good
+  # Suburbs with fewer than this many dwellings/population are excluded as too thin.
+  min_population: 3000
+
+# --- Data source packages (Domain) ---------------------------------------
+# These must be added to your Domain project in the developer portal before the
+# endpoints return data. See README "Enable Domain packages".
+domain:
+  api_base: https://api.domain.com.au
+  auth_url: https://auth.domain.com.au/v1/connect/token
+  # Politeness / free-tier safety:
+  daily_call_budget: 450     # stop before hitting the free 500/day cap
+  request_delay_seconds: 1.0
