@@ -768,6 +768,7 @@ _PAGE = """<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">
 :root[data-theme="dark"]{{--bg:#0e1116;--panel:#161b22;--ink:#e8ecf2;--muted:#9aa4b2;--line:#232a33;--accent:#4f8bff;--accent-soft:#16233a;--good:#43c491;--warn:#e0a458;--bad:#f0776c;--chip:#1c232d}}
 :root[data-theme="light"]{{--bg:#f7f8fa;--panel:#fff;--ink:#14181f;--muted:#5c6673;--line:#e5e8ee;--accent:#1f6feb;--accent-soft:#e7f0ff;--good:#1a7f5a;--warn:#b4690e;--bad:#b3261e;--chip:#eef1f6}}
 *{{box-sizing:border-box}}
+html{{scroll-behavior:smooth}}
 body{{margin:0;background:var(--bg);color:var(--ink);font:16px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;-webkit-font-smoothing:antialiased}}
 .wrap{{max-width:1140px;margin:0 auto;padding:28px 20px 80px}}
 header.hero{{padding:30px 0 14px;border-bottom:1px solid var(--line);margin-bottom:22px}}
@@ -784,13 +785,33 @@ h3.ph{{font-size:14px;color:var(--muted);text-transform:uppercase;letter-spacing
 .stat{{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px 16px;flex:1;min-width:150px}}
 .stat .v{{font-size:24px;font-weight:800}} .stat .l{{font-size:12px;color:var(--muted)}}
 .layout{{display:flex;gap:22px;align-items:flex-start;margin-top:14px}}
-.sidebar{{position:sticky;top:12px;width:186px;flex:0 0 186px;display:flex;flex-direction:column;gap:3px;max-height:calc(100vh - 24px);overflow:auto}}
+.sidebar{{position:sticky;top:10px;width:186px;flex:0 0 186px;display:flex;flex-direction:column;gap:3px;max-height:calc(100vh - 20px);overflow:auto}}
 .content{{flex:1;min-width:0}}
-.ptab{{text-align:left;background:transparent;border:1px solid transparent;border-radius:9px;padding:10px 13px;font-size:14px;font-weight:600;color:var(--muted);cursor:pointer;width:100%}}
+.ptab{{text-align:left;background:transparent;border:1px solid transparent;border-radius:9px;padding:10px 13px;font-size:14px;font-weight:600;color:var(--muted);cursor:pointer;width:100%;white-space:nowrap}}
 .ptab:hover{{background:var(--panel)}}
 .ptab.active{{color:#fff;background:var(--accent);border-color:var(--accent)}}
 .page{{display:none}} .page.active{{display:block}}
-@media(max-width:760px){{.layout{{flex-direction:column;gap:8px}}.sidebar{{position:static;width:100%;flex:auto;flex-direction:row;flex-wrap:wrap;max-height:none;border-bottom:1px solid var(--line);padding-bottom:6px}}.ptab{{width:auto}}}}
+/* Mobile: pin the tabs as a horizontal, swipeable bar at the top — always reachable */
+@media(max-width:760px){{
+  .layout{{flex-direction:column;gap:0}}
+  .sidebar{{position:sticky;top:0;z-index:30;width:100%;flex:auto;flex-direction:row;flex-wrap:nowrap;overflow-x:auto;-webkit-overflow-scrolling:touch;max-height:none;gap:6px;padding:8px 0;background:var(--bg);border-bottom:1px solid var(--line);box-shadow:0 2px 8px rgba(0,0,0,.06)}}
+  .ptab{{width:auto;flex:0 0 auto}}
+  .content{{padding-top:8px}}
+  .wrap{{padding-top:14px}}
+}}
+/* Floating back-to-top */
+.totop{{position:fixed;right:16px;bottom:16px;width:46px;height:46px;border-radius:50%;background:var(--accent);color:#fff;border:none;font-size:20px;line-height:1;cursor:pointer;box-shadow:0 3px 12px rgba(0,0,0,.28);opacity:0;pointer-events:none;transition:opacity .2s;z-index:40}}
+.totop.show{{opacity:1;pointer-events:auto}}
+@media(prefers-reduced-motion:reduce){{html{{scroll-behavior:auto}}}}
+/* Mobile: compact the top so the tab bar is reachable near the top of the page */
+@media(max-width:760px){{
+  header.hero{{padding:14px 0 8px;margin-bottom:10px}}
+  h1{{font-size:22px}}
+  .lede{{display:none}} .meta{{display:none}}
+  .banner{{font-size:12px;padding:10px 12px;margin:10px 0}}
+  .pricebasis{{display:none}}   /* keep the search box; the main banner already covers the price caveat */
+  .lookup input{{font-size:14px;padding:10px 12px}}
+}}
 .lookup{{margin:6px 0 4px}}
 .lookup input{{width:100%;padding:12px 14px;font-size:15px;border:1px solid var(--line);border-radius:10px;background:var(--panel);color:var(--ink)}}
 .lookup input:focus{{outline:none;border-color:var(--accent)}}
@@ -846,6 +867,7 @@ ul.tight{{margin:0;padding-left:18px}} ul.tight li{{margin:6px 0;font-size:14px}
 details{{margin-top:10px}} summary{{cursor:pointer;color:var(--accent);font-size:13.5px}}
 </style></head><body>
 <button class="theme-toggle" onclick="var r=document.documentElement,d=r.getAttribute('data-theme')||(matchMedia('(prefers-color-scheme:dark)').matches?'dark':'light');r.setAttribute('data-theme',d==='dark'?'light':'dark')">◐ theme</button>
+<button class="totop" id="toTop" onclick="window.scrollTo({{top:0,behavior:'smooth'}})" aria-label="Back to top" title="Back to top">↑</button>
 <div class="wrap">
   <header class="hero">
     <div class="kicker">PropIntel · Macro-Fundamentals Growth Map</div>
@@ -963,6 +985,10 @@ function showBand(a,b){{
   strat.querySelectorAll('.tabpanel').forEach(function(p){{p.classList.toggle('active',p.id==='panel-'+a+'-'+b)}});
   strat.querySelectorAll('.tabbtn').forEach(function(x){{x.classList.toggle('active',x.getAttribute('data-band')===a+'-'+b)}});
 }}
+// show the back-to-top button once you've scrolled a bit
+window.addEventListener('scroll',function(){{
+  var b=document.getElementById('toTop'); if(b) b.classList.toggle('show', window.pageYOffset>350);
+}},{{passive:true}});
 </script>
 </body></html>"""
 
