@@ -784,20 +784,18 @@ h3.ph{{font-size:14px;color:var(--muted);text-transform:uppercase;letter-spacing
 .stat-row{{display:flex;gap:12px;flex-wrap:wrap;margin:16px 0}}
 .stat{{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px 16px;flex:1;min-width:150px}}
 .stat .v{{font-size:24px;font-weight:800}} .stat .l{{font-size:12px;color:var(--muted)}}
-.layout{{display:flex;gap:22px;align-items:flex-start;margin-top:14px}}
-.sidebar{{position:sticky;top:10px;width:186px;flex:0 0 186px;display:flex;flex-direction:column;gap:3px;max-height:calc(100vh - 20px);overflow:auto}}
-.content{{flex:1;min-width:0}}
-.ptab{{text-align:left;background:transparent;border:1px solid transparent;border-radius:9px;padding:10px 13px;font-size:14px;font-weight:600;color:var(--muted);cursor:pointer;width:100%;white-space:nowrap}}
-.ptab:hover{{background:var(--panel)}}
+/* Horizontal tab bar across the top (sticky), content full-width below it */
+.layout{{display:block;margin-top:12px}}
+.sidebar{{position:sticky;top:0;z-index:30;display:flex;flex-direction:row;flex-wrap:wrap;gap:6px;width:100%;background:var(--bg);border-bottom:1px solid var(--line);padding:10px 0;margin-bottom:16px}}
+.content{{width:100%;min-width:0}}
+.ptab{{background:var(--panel);border:1px solid var(--line);border-radius:999px;padding:8px 14px;font-size:14px;font-weight:600;color:var(--muted);cursor:pointer;white-space:nowrap}}
+.ptab:hover{{background:var(--accent-soft);color:var(--ink)}}
 .ptab.active{{color:#fff;background:var(--accent);border-color:var(--accent)}}
 .page{{display:none}} .page.active{{display:block}}
-/* Mobile: pin the tabs as a horizontal, swipeable bar at the top — always reachable */
+/* Mobile: same bar, but swipe sideways instead of wrapping */
 @media(max-width:760px){{
-  .layout{{flex-direction:column;gap:0}}
-  .sidebar{{position:sticky;top:0;z-index:30;width:100%;flex:auto;flex-direction:row;flex-wrap:nowrap;overflow-x:auto;-webkit-overflow-scrolling:touch;max-height:none;gap:6px;padding:8px 0;background:var(--bg);border-bottom:1px solid var(--line);box-shadow:0 2px 8px rgba(0,0,0,.06)}}
-  .ptab{{width:auto;flex:0 0 auto}}
-  .content{{padding-top:8px}}
-  .wrap{{padding-top:14px}}
+  .sidebar{{flex-wrap:nowrap;overflow-x:auto;-webkit-overflow-scrolling:touch;box-shadow:0 2px 8px rgba(0,0,0,.06)}}
+  .ptab{{flex:0 0 auto}}
 }}
 /* Floating back-to-top */
 .totop{{position:fixed;right:16px;bottom:16px;width:46px;height:46px;border-radius:50%;background:var(--accent);color:#fff;border:none;font-size:20px;line-height:1;cursor:pointer;box-shadow:0 3px 12px rgba(0,0,0,.28);opacity:0;pointer-events:none;transition:opacity .2s;z-index:40}}
