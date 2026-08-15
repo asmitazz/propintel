@@ -75,9 +75,13 @@ def _band(price) -> str:
         return "under-400k"
     if price < 500_000:
         return "400-500k"
-    if price <= 600_000:
+    if price < 600_000:
         return "500-600k"
-    return "over-600k"
+    if price < 800_000:
+        return "600-800k"
+    if price <= 1_000_000:
+        return "800k-1M"
+    return "over-1M"
 
 
 def _series_metrics(series: dict) -> dict | None:

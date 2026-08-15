@@ -20,7 +20,8 @@ CATALYSTS = ROOT / "data" / "catalysts.json"
 
 ASSETS = [("house", "🏠 Houses"), ("townhouse", "🏘 Townhouses & Villas")]
 BANDS = [("overview", "★ Top overall"), ("under-400k", "Under $400k"),
-         ("400-500k", "$400–500k"), ("500-600k", "$500–600k")]
+         ("400-500k", "$400–500k"), ("500-600k", "$500–600k"),
+         ("600-800k", "$600–800k"), ("800k-1M", "$800k–1M")]
 CYCLE_CLASS = {"Early": "b-early", "Mid": "b-mid", "Late": "b-late", "Flat": "b-flat", "Unknown": "b-flat"}
 RISK_CLASS = {"Diversified": "b-early", "Elevated": "b-mid", "High": "b-late"}
 STATUS_CLASS = {"Active": "b-early", "Under construction": "b-early", "Announced": "b-early",
@@ -170,7 +171,7 @@ def _scenario_section(recs: list[dict]) -> str:
     for s in recs:
         for asset in ("house", "townhouse"):
             a = s.get(asset)
-            if a and a["price_now"] <= 600000 and (s.get("ripple_gap") or 0) >= 15:
+            if a and a["price_now"] <= 1_000_000 and (s.get("ripple_gap") or 0) >= 15:
                 rip.append((s, asset, a))
                 break
     rip.sort(key=lambda x: -(x[0]["ripple_gap"] or 0))
@@ -188,7 +189,7 @@ def _scenario_section(recs: list[dict]) -> str:
       <p class="m-detail"><b>The domino chain (how a government catalyst becomes price growth):</b></p>
       <p class="m-detail" style="margin-top:6px">① <b>Funded infrastructure / jobs</b> (e.g. AUKUS at Osborne, Olympics transport in SEQ, Hunter energy transition) → ② <b>employment</b> rises and non-local workers arrive → ③ <b>net migration &amp; population</b> climb (demand) → ④ if <b>supply is constrained</b> (approvals &lt;8% / 5km) demand outstrips it → ⑤ <b>prices &amp; rents</b> rise in the core suburbs → ⑥ buyers priced out spill into <b>cheaper adjacent suburbs of similar income</b> → the <b>ripple</b> lifts those next.</p>
       <p class="m-detail" style="margin-top:10px"><b>Why the ripple column matters:</b> a suburb priced well below its similar-income neighbours (within 10km) is the arbitrage — as the dearer neighbours become unaffordable, demand ripples to it and the gap closes. Combined with a <b>diversifying, anchor-led economy</b> and <b>low socio-economic base that's rising</b>, that's the highest-conviction forward setup.</p>
-      <p class="m-detail" style="margin-top:10px"><b>Top ripple / arbitrage candidates under $600k</b> (priced below similar-income neighbours):</p>
+      <p class="m-detail" style="margin-top:10px"><b>Top ripple / arbitrage candidates under $1M</b> (priced below similar-income neighbours):</p>
       <div class="tablewrap" style="margin-top:8px"><table style="min-width:640px">
         <thead><tr><th>Suburb</th><th>St</th><th class="num">Price (est)</th><th class="num">Below peers</th><th>Economic base</th><th>Trajectory</th></tr></thead>
         <tbody>{rows}</tbody></table></div>
@@ -313,7 +314,7 @@ def _sersi_update() -> str:
 
 def _summary_section(recs: list[dict], trends: dict, proj: dict) -> str:
     def top(asset, n=5):
-        el = [r for r in recs if r.get(asset) and r[asset]["price_now"] <= 600000]
+        el = [r for r in recs if r.get(asset) and r[asset]["price_now"] <= 1_000_000]
         el.sort(key=lambda r: r[asset]["rank"])
         return el[:n]
     th, tt = top("house"), top("townhouse")
@@ -360,10 +361,10 @@ def _summary_section(recs: list[dict], trends: dict, proj: dict) -> str:
       <div class="stat"><div class="v">+{nat/1e6:.2f}M</div><div class="l">people by {end} · {jump("outlook","Outlook")}</div></div>
     </div>
 
-    <h3 class="ph">Top houses under $600k {jump("shortlist","full list")}</h3>
+    <h3 class="ph">Top houses under $1M {jump("shortlist","full list")}</h3>
     <div class="tablewrap"><table style="min-width:720px"><thead><tr><th>Suburb</th><th>St</th><th class="num">Price (est)</th><th class="num">Yield</th><th class="num">Proj 10yr</th><th>Cycle</th><th class="num">Score</th></tr></thead><tbody>{pick_rows(th,"house")}</tbody></table></div>
 
-    <h3 class="ph">Top townhouses / villas under $600k {jump("shortlist","full list")}</h3>
+    <h3 class="ph">Top townhouses / villas under $1M {jump("shortlist","full list")}</h3>
     <div class="tablewrap"><table style="min-width:720px"><thead><tr><th>Suburb</th><th>St</th><th class="num">Price (est)</th><th class="num">Yield</th><th class="num">Proj 10yr</th><th>Cycle</th><th class="num">Score</th></tr></thead><tbody>{pick_rows(tt,"townhouse")}</tbody></table></div>
 
     <div class="grid2" style="margin-top:16px">
@@ -572,6 +573,7 @@ def _news_growth_section(recs: list[dict]) -> str:
           <div class="pcard-h"><span class="ploc">{m["market"]} · {m["state"]}</span>{_status_badge(m.get("status",""))}</div>
           <p class="m-detail"><b>News / catalyst:</b> {m["catalyst"]}</p>
           <p class="m-detail" style="color:var(--muted);margin-top:4px"><b>Jobs:</b> {m["jobs"]} &nbsp;·&nbsp; <b>Funding:</b> {m.get("funding","")} &nbsp;·&nbsp; <b>Timeframe:</b> {m.get("timeframe","")}</p>
+          <p class="m-detail invest" style="margin-top:6px"><b>Impact:</b> {m.get("impact","")}</p>
           <div class="tablewrap" style="margin-top:8px"><table style="min-width:520px">
             <thead><tr><th>Suburb</th><th class="num">Pop g/yr</th><th class="num">Mig /1k</th><th class="num">Ripple</th><th>Trajectory</th><th class="num">Score</th></tr></thead>
             <tbody>{sub_rows}</tbody></table></div>
@@ -669,13 +671,24 @@ def _policy_section() -> str:
 
 def _catalyst_section() -> str:
     cat = json.loads(CATALYSTS.read_text())
-    themes = {}
-    for m in cat["markets"]:
-        themes.setdefault(m["theme"], []).append(f'{m["market"]} ({m["state"]})')
-    items = "".join(f'<li><b>{t}</b> — {", ".join(v)}</li>' for t, v in themes.items())
-    return (f'<h2>Structural catalyst map (context)</h2>'
-            f'<p class="sub">The funded, multi-year projects behind the demand signals — why a region\'s fundamentals are turning.</p>'
-            f'<div class="panel"><ul class="tight">{items}</ul></div>')
+    reviewed = cat.get("last_reviewed", "")
+    order = {"Active": 0, "Under construction": 0, "Announced": 1, "Planned": 2,
+             "Delayed": 2, "Emerging": 2, "Uncertain": 3, "Cancelled": 3}
+    ms = sorted(cat["markets"], key=lambda m: (order.get(m.get("status"), 2), m["state"], m["market"]))
+    cards = "".join(
+        f'''<div class="pcard">
+          <div class="pcard-h"><span class="ploc">{m["market"]} · {m["state"]}</span>{_status_badge(m.get("status",""))}</div>
+          <p class="m-theme">{m["theme"]}</p>
+          <p class="m-detail" style="color:var(--muted)"><b>Funding:</b> {m.get("funding","")} &nbsp;·&nbsp; <b>Jobs:</b> {m.get("jobs","")} &nbsp;·&nbsp; <b>By:</b> {m.get("timeframe","")}</p>
+          <p class="m-detail invest"><b>Potential impact on growth:</b> {m.get("impact","")}</p>
+          <div class="src"><a href="{m.get("source","")}">source</a></div>
+        </div>''' for m in ms
+    )
+    watch = "".join(f'<li><b>{w["market"]} ({w["state"]})</b> — {w["note"]}</li>' for w in cat.get("watch", []))
+    return (f'<h2>Catalysts &amp; their potential impact</h2>'
+            f'<p class="sub">Every committed funding/jobs catalyst and <b>what it likely means for capital and rental growth</b> — ordered by status, so cancelled/uncertain projects (e.g. Whyalla) don\'t mislead. Last reviewed {reviewed}.</p>'
+            f'<div class="pgrid">{cards}</div>'
+            + (f'<h3 class="ph">On the watchlist</h3><div class="panel"><ul class="tight">{watch}</ul></div>' if watch else ""))
 
 
 def _load_live_prices() -> dict:
@@ -837,8 +850,8 @@ details{{margin-top:10px}} summary{{cursor:pointer;color:var(--accent);font-size
   <header class="hero">
     <div class="kicker">PropIntel · Macro-Fundamentals Growth Map</div>
     <h1>Where Australia's next capital growth is being built — 100% public data, no listings</h1>
-    <p class="lede">Every Australian suburb (SA2) scored on the fundamentals that drive capital growth <b>before price moves</b>: yield, population growth, net migration, affordability, supply scarcity, industry diversity and jobs — from ABS + state valuers-general. Switch between the <b>Houses</b> and <b>Townhouses/Villas</b> strategies, then filter by budget.</p>
-    <div class="meta">Generated {generated} · Up to $600k · Source: ABS Data by Region, ERP · Domain-free</div>
+    <p class="lede">Every Australian suburb (SA2) scored on the fundamentals that drive capital growth <b>before price moves</b>: yield, population growth, net migration, affordability, supply scarcity, industry diversity and jobs — from ABS + state valuers-general. Switch between the <b>Houses</b> and <b>Townhouses/Villas</b> strategies, then filter by budget (now up to $1M).</p>
+    <div class="meta">Generated {generated} · Up to $1M · Source: ABS Data by Region, ERP · Domain-free</div>
   </header>
 
   <div class="banner">⚠️ <b>Not financial advice — and prices are indicative only.</b> They are <b>ABS SA2-area sold medians (2024)</b> escalated ~2.5yr to today, so they read <b>below realestate.com.au</b> (which shows named-suburb asking/AVM) and can be off by 10–20% for any single suburb. <b>Rank suburbs on the fundamentals; verify the live median via the link in each lookup before acting.</b> Accurate current medians need a paid live source (Domain <i>Business</i> plan or CoreLogic/Cotality) — the free tier only has listings.</div>
