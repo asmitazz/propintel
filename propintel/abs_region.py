@@ -111,6 +111,40 @@ def pull_tenure(region_type: str = "SA2") -> dict[str, dict]:
     return out
 
 
+def pull_dwelling_mix(region_type: str = "SA2") -> dict[str, dict]:
+    """Housing-TYPE composition by SA2 (2021 Census), as % of occupied dwellings.
+
+      DWELL_2  Separate house (no.)
+      DWELL_3  Semi-detached, row/terrace, townhouse etc. (no.)
+      DWELL_4  Flat or apartment (no.)
+
+    Context for the median: an SA2 that's 85% separate houses has a clean house
+    median, whereas a flat-heavy SA2 means the 'house' median rests on a thin
+    sample. Separate small pull (2021 only) to keep the big combined key lean.
+    """
+    key = "DWELL_2+DWELL_3+DWELL_4." + region_type + "..A"
+    obs, _ = fetch_observations(
+        "ABS_REGIONAL_ASGS2021", key=key, params={"startPeriod": "2021"}, timeout=120
+    )
+    counts: dict[str, dict] = defaultdict(dict)
+    for r in obs:
+        code, meas, val = r.get("ASGS_2021"), r.get("MEASURE"), r.get("VALUE")
+        if code and meas in ("DWELL_2", "DWELL_3", "DWELL_4") and val is not None:
+            counts[code][meas] = val
+    out: dict[str, dict] = {}
+    for code, cc in counts.items():
+        h, t, f = cc.get("DWELL_2"), cc.get("DWELL_3"), cc.get("DWELL_4")
+        tot = sum(v for v in (h, t, f) if v is not None)
+        if not tot:
+            continue
+        out[code] = {
+            "pct_house": round((h or 0) / tot * 100),
+            "pct_townhouse": round((t or 0) / tot * 100),
+            "pct_flat": round((f or 0) / tot * 100),
+        }
+    return out
+
+
 # ANZSIC divisions (EMP_IND_2..20) as % of employed residents, per SA2.
 INDUSTRY = {
     2: "Agriculture", 3: "Mining", 4: "Manufacturing", 5: "Utilities",

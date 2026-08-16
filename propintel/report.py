@@ -722,6 +722,7 @@ def _lookup_data(recs: list[dict], live: dict) -> str:
             "oo": r.get("owner_occupier_pct"),      # owner-occupier share % (2021)
             "od": r.get("owner_occupier_delta"),    # change in that share 2016->2021 (traction)
             "om": r.get("owned_mortgage_pct"),      # owned-with-mortgage % (recent OO buyers)
+            "dh": r.get("pct_house"), "dt": r.get("pct_townhouse"), "df": r.get("pct_flat"),
         })
     return json.dumps(out, separators=(",", ":"))
 
@@ -986,6 +987,9 @@ function doLookup(q){{
       '<div class="lugrid">'+
       (s.lv?'<div style="grid-column:1/-1"><span>🟢 Live Domain median (asking):</span> <b>$'+s.lv.toLocaleString()+'</b></div>':'')+
       fmtAsset('House (ABS est)', s.h)+fmtAsset('Townhouse/villa', s.t)+
+      '<div style="grid-column:1/-1"><span>Housing mix:</span> '+(s.dh!=null?
+        s.dh+'% house · '+s.dt+'% townhouse · '+s.df+'% flat'+
+        (s.dh<60?' <span class="sub2">(flat-heavy — the house median rests on a thin sample)</span>':''):'—')+'</div>'+
       '<div><span>Ripple:</span> '+(s.rp!=null?(s.rp>=15?'+'+s.rp+'% below peers':s.rp+'%'):'—')+'</div>'+
       '<div><span>Socio-economic:</span> decile '+(s.ses||'—')+' '+g+'</div>'+
       '<div><span>Income vs state:</span> '+(s.ivs!=null?(s.ivs>0?'+':'')+s.ivs+'pp/yr':'—')+'</div>'+

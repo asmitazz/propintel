@@ -294,6 +294,10 @@ def build_analysis() -> dict:
             tenure = abs_region.pull_tenure("SA2")
         except Exception:
             tenure = {}
+        try:
+            dwmix = abs_region.pull_dwelling_mix("SA2")
+        except Exception:
+            dwmix = {}
 
         # 5km supply-influx catchment (committed building approvals ÷ dwelling stock)
         centroids = abs_geo.fetch_sa2_centroids()
@@ -369,6 +373,9 @@ def build_analysis() -> dict:
                 "owner_occupier_pct": (tenure.get(code) or {}).get("owner_occupier_pct"),
                 "owner_occupier_delta": (tenure.get(code) or {}).get("owner_occupier_delta"),
                 "owned_mortgage_pct": (tenure.get(code) or {}).get("owned_mortgage_pct"),
+                "pct_house": (dwmix.get(code) or {}).get("pct_house"),
+                "pct_townhouse": (dwmix.get(code) or {}).get("pct_townhouse"),
+                "pct_flat": (dwmix.get(code) or {}).get("pct_flat"),
                 "income_growth_pa": round(abs_region.cagr(m.get("employee_income", {})), 1)
                     if abs_region.cagr(m.get("employee_income", {})) is not None else None,
                 "top_industry": div.get("top_industry"),
