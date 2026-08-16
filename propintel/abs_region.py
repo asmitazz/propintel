@@ -73,6 +73,44 @@ def latest(series: dict) -> float | None:
     return None
 
 
+def pull_tenure(region_type: str = "SA2") -> dict[str, dict]:
+    """Owner-occupier tenure by SA2, at both the 2016 and 2021 Census points so we
+    can show *traction* (the change in owner-occupier share), not just a snapshot.
+
+      TENURE_2  Owned outright (%)
+      TENURE_3  Owned with a mortgage (%)     <- the recent owner-occupier buyers
+      TENURE_4  Rented (%)
+
+    Owner-occupier share = outright + mortgage (national ~66%). A rising share
+    alongside positive net internal migration signals owner-occupier-led demand —
+    generally more stable and growth-supportive than an investor-churned market.
+    Kept as a SEPARATE small pull (startPeriod=2016) so it can't bloat the big
+    combined indicator key or trip its timeout.
+    """
+    key = "TENURE_2+TENURE_3+TENURE_4." + region_type + "..A"
+    obs, _ = fetch_observations(
+        "ABS_REGIONAL_ASGS2021", key=key, params={"startPeriod": "2016"}, timeout=120
+    )
+    by: dict[str, dict] = defaultdict(lambda: defaultdict(dict))
+    for r in obs:
+        code, meas, val = r.get("ASGS_2021"), r.get("MEASURE"), r.get("VALUE")
+        if code and meas in ("TENURE_2", "TENURE_3", "TENURE_4") and val is not None:
+            by[code][meas][r["TIME_PERIOD"]] = val
+    out: dict[str, dict] = {}
+    for code, mm in by.items():
+        def oo(yr: str) -> float | None:
+            a, b = mm.get("TENURE_2", {}).get(yr), mm.get("TENURE_3", {}).get(yr)
+            return round(a + b, 1) if (a is not None and b is not None) else None
+        oo21, oo16 = oo("2021"), oo("2016")
+        out[code] = {
+            "owner_occupier_pct": oo21,
+            "owner_occupier_delta": (round(oo21 - oo16, 1)
+                                     if (oo21 is not None and oo16 is not None) else None),
+            "owned_mortgage_pct": mm.get("TENURE_3", {}).get("2021"),
+        }
+    return out
+
+
 # ANZSIC divisions (EMP_IND_2..20) as % of employed residents, per SA2.
 INDUSTRY = {
     2: "Agriculture", 3: "Mining", 4: "Manufacturing", 5: "Utilities",

@@ -128,7 +128,7 @@ def _table(rows_html: str, asset_label: str) -> str:
     return f'''<div class="tablewrap"><table>
       <thead><tr>
         <th class="num">#</th><th>Suburb (SA2)</th><th>St</th><th class="num">{asset_label} (est. now)</th>
-        <th class="num" title="House ÷ unit price (2024)">H:U var</th><th class="num">Yield (Census·mkt)</th>
+        <th class="num" title="House ÷ unit price (2024)">H:U var</th><th class="num" title="Gross yield = annual rent ÷ price. ·mkt applies a +1.4pp Census-rent→market-asking adjustment.">Gross yld ·mkt</th>
         <th class="num" title="% below similar-income neighbours within 10km (ripple/arbitrage upside)">Ripple</th><th class="num">Pop g/yr</th><th class="num">Net mig /1k</th>
         <th class="num" title="Dwelling-approval influx within 5km as % of stock (rule-out >8%)">Supply 5km</th>
         <th class="num" title="Socio-economic decile (1=most disadvantaged). ▲ gentrifying · ▼ trap">SES</th>
@@ -337,7 +337,7 @@ def _summary_section(recs: list[dict], trends: dict, proj: dict) -> str:
             if (r.get("ripple_gap") or 0) >= 15: tags.append(f'ripple+{r["ripple_gap"]:.0f}%')
             out += (f'<tr><td><b>{r["name"]}</b> {" ".join(tags)}</td><td>{r["state"]}</td>'
                     f'<td class="num">≈${a["price_now"]:,}</td>'
-                    f'<td class="num">~{a["market_yield"]:.1f}%</td>'
+                    f'<td class="num">{a["gross_yield"]:.1f}%</td>'
                     f'<td class="num">{r.get("proj_pop_growth_10yr","—")}%</td>'
                     f'<td><span class="badge {CYCLE_CLASS.get(a["cycle"],"b-flat")}">{a["cycle"]}</span></td>'
                     f'<td class="num"><b>{a["score"]}</b></td></tr>')
@@ -357,10 +357,10 @@ def _summary_section(recs: list[dict], trends: dict, proj: dict) -> str:
     </div>
 
     <h3 class="ph">Top houses under $1M {jump("shortlist","full list")}</h3>
-    <div class="tablewrap"><table style="min-width:720px"><thead><tr><th>Suburb</th><th>St</th><th class="num">Price (est)</th><th class="num">Yield</th><th class="num">Proj 10yr</th><th>Cycle</th><th class="num">Score</th></tr></thead><tbody>{pick_rows(th,"house")}</tbody></table></div>
+    <div class="tablewrap"><table style="min-width:720px"><thead><tr><th>Suburb</th><th>St</th><th class="num">Price (est)</th><th class="num">Gross yld</th><th class="num">Proj 10yr</th><th>Cycle</th><th class="num">Score</th></tr></thead><tbody>{pick_rows(th,"house")}</tbody></table></div>
 
     <h3 class="ph">Top townhouses / villas under $1M {jump("shortlist","full list")}</h3>
-    <div class="tablewrap"><table style="min-width:720px"><thead><tr><th>Suburb</th><th>St</th><th class="num">Price (est)</th><th class="num">Yield</th><th class="num">Proj 10yr</th><th>Cycle</th><th class="num">Score</th></tr></thead><tbody>{pick_rows(tt,"townhouse")}</tbody></table></div>
+    <div class="tablewrap"><table style="min-width:720px"><thead><tr><th>Suburb</th><th>St</th><th class="num">Price (est)</th><th class="num">Gross yld</th><th class="num">Proj 10yr</th><th>Cycle</th><th class="num">Score</th></tr></thead><tbody>{pick_rows(tt,"townhouse")}</tbody></table></div>
 
     <div class="panel" style="margin-top:16px">
       <p class="m-detail"><b>How Sersi picks these:</b> every Australian suburb (SA2) is scored on the fundamentals that drive capital growth <i>before</i> price moves — yield, gentrification (low socio-economic base rising, confirmed by incomes outpacing the state), ripple/arbitrage vs richer neighbours, migration, affordability, industry diversity and supply scarcity — then oversupplied greenfield estates are ruled out (&gt;8% approvals within 5km). 100% free public data (ABS + valuers-general); no listings, Domain-free.</p>
@@ -704,7 +704,9 @@ def _load_live_prices() -> dict:
 def _lookup_data(recs: list[dict], live: dict) -> str:
     """Compact JSON of every suburb for the client-side lookup."""
     def asset(a):
-        return [a["price_now"], a["score"], a["band"], a["cycle"], a["market_yield"]] if a else None
+        # [price, score, band, cycle, market_yield, gross_yield]
+        return [a["price_now"], a["score"], a["band"], a["cycle"],
+                a["market_yield"], a["gross_yield"]] if a else None
     out = []
     for r in recs:
         out.append({
@@ -717,6 +719,9 @@ def _lookup_data(recs: list[dict], live: dict) -> str:
             "pj": r.get("proj_pop_growth_10yr"), "sup": r.get("catchment_influx_pct"),
             "lv": live.get(r["code"]),   # live Domain median asking, if refreshed
             "i3": [f"{n} {p}%" for n, p in (r.get("top3_industries") or [])],
+            "oo": r.get("owner_occupier_pct"),      # owner-occupier share % (2021)
+            "od": r.get("owner_occupier_delta"),    # change in that share 2016->2021 (traction)
+            "om": r.get("owned_mortgage_pct"),      # owned-with-mortgage % (recent OO buyers)
         })
     return json.dumps(out, separators=(",", ":"))
 
@@ -940,7 +945,34 @@ details{{margin-top:10px}} summary{{cursor:pointer;color:var(--accent);font-size
 var LOOKUP = {lookupdata};
 function fmtAsset(label, a){{
   if(!a) return '<div><span>'+label+':</span> —</div>';
-  return '<div><span>'+label+':</span> ≈$'+a[0].toLocaleString()+' · score '+a[1]+' · '+a[3]+' · yld~'+(a[4]).toFixed(1)+'% · '+a[2]+'</div>';
+  var gy=(a[5]!=null?a[5]:a[4]);
+  return '<div><span>'+label+':</span> ≈$'+a[0].toLocaleString()+' · score '+a[1]+' · '+a[3]+
+    ' · gross yld <b>'+gy.toFixed(1)+'%</b> (mkt ~'+a[4].toFixed(1)+'%) · '+a[2]+'</div>';
+}}
+// suburb name before the SA2 " - " compound, for cleaner external links
+function coreName(n){{ return (n||'').split(' - ')[0]; }}
+function reaSlug(s){{ return encodeURIComponent(coreName(s.n))+',+'+(s.st||'').toLowerCase(); }}
+function gsearch(s, terms){{ return 'https://www.google.com/search?q='+encodeURIComponent(coreName(s.n)+' '+s.st+' '+terms); }}
+// State-correct hazard viewers. Zoning is parcel-level (8 different state schemas),
+// so we can't auto-flag or filter at suburb level on free data — these open the
+// authoritative map where you check the exact address. Google fallback always resolves.
+var HAZ={{
+  NSW:{{f:'https://www.planningportal.nsw.gov.au/spatialviewer/', b:'https://www.planningportal.nsw.gov.au/spatialviewer/'}},
+  VIC:{{f:'https://mapshare.vic.gov.au/vicplan/', b:'https://mapshare.vic.gov.au/vicplan/'}},
+  QLD:{{f:'https://floodcheck.information.qld.gov.au/', b:null}},
+  SA:{{f:'https://sappa.plan.sa.gov.au/', b:'https://sappa.plan.sa.gov.au/'}},
+  WA:{{f:'https://maps.water.wa.gov.au/floodmap/', b:'https://maps.slip.wa.gov.au/landgate/bushfireprone/'}},
+  TAS:{{f:'https://maps.thelist.tas.gov.au/listmap/app/list/map', b:'https://maps.thelist.tas.gov.au/listmap/app/list/map'}},
+  ACT:{{f:'https://www.actmapi.act.gov.au/', b:'https://www.actmapi.act.gov.au/'}}
+}};
+function hazLink(s, kind, label){{
+  var h=HAZ[s.st]||{{}};
+  var url=(kind==='flood'?h.f:h.b) || gsearch(s, kind==='flood'?'flood map':'bushfire prone land map');
+  return '<a target="_blank" rel="noopener" href="'+url+'">'+label+'</a>';
+}}
+function bedLink(s, n){{
+  return '<a target="_blank" rel="noopener" href="https://www.realestate.com.au/sold/property-house-with-'+
+    n+'-bedrooms-in-'+reaSlug(s)+'/list-1">'+n+'BR</a>';
 }}
 function doLookup(q){{
   var box=document.getElementById('lookupResults');
@@ -962,10 +994,18 @@ function doLookup(q){{
       '<div><span>Projected 10yr:</span> '+(s.pj!=null?'+'+s.pj+'% to 2034 (est)':'—')+'</div>'+
       '<div><span>Supply 5km:</span> '+(s.sup!=null?s.sup+'%':'—')+'</div>'+
       '<div><span>Economy:</span> '+(s.eb||'—')+'</div>'+
+      '<div><span>Owner-occupiers:</span> '+(s.oo!=null? '<b>'+s.oo+'%</b> own'+
+        (s.od!=null?' <span class="sub2">('+(s.od>0?'+':'')+s.od+'pp vs 2016'+(s.od>0?', owners moving in':(s.od<0?', investors gaining':''))+')</span>':'') : '—')+'</div>'+
       '<div style="grid-column:1/-1"><span>Top industries:</span> '+(s.i3&&s.i3.length?s.i3.join(' · '):'—')+'</div>'+
+      '<div style="grid-column:1/-1;margin-top:4px"><span>⚠️ Check hazards:</span> '+
+        hazLink(s,'flood','🌊 Flood map')+' · '+hazLink(s,'bush','🔥 Bushfire map')+
+        '<span class="sub2"> — zoning is per-property; a suburb can be only partly affected. Confirm the exact address before buying.</span></div>'+
+      '<div style="grid-column:1/-1"><span>Price by config (live sold):</span> '+
+        bedLink(s,2)+' · '+bedLink(s,3)+' · '+bedLink(s,4)+
+        '<span class="sub2"> — the ABS median blends all sizes; these show recent sold prices split by bedroom count.</span></div>'+
       '<div style="grid-column:1/-1;margin-top:4px"><span>Verify live median:</span> '+
-        '<a target="_blank" href="https://www.realestate.com.au/buy/in-'+encodeURIComponent(s.n+', '+s.st)+'/list-1">realestate.com.au</a> · '+
-        '<a target="_blank" href="https://www.google.com/search?q='+encodeURIComponent(s.n+' '+s.st+' median house price')+'">median lookup</a></div>'+
+        '<a target="_blank" rel="noopener" href="https://www.realestate.com.au/buy/in-'+reaSlug(s)+'/list-1">realestate.com.au</a> · '+
+        '<a target="_blank" rel="noopener" href="'+gsearch(s,'median house price')+'">median lookup</a></div>'+
       '</div></div>';
   }}).join('');
 }}

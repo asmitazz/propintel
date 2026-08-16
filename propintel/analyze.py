@@ -288,6 +288,12 @@ def build_analysis() -> dict:
         pop = abs_client.pull_population("SA2")
         diversity = abs_region.pull_industry_diversity("SA2")
         seifa = abs_region.pull_seifa()
+        # Owner-occupier tenure (share + 2016->2021 traction). Enhancement only —
+        # a hiccup here must not kill the core daily run, so degrade to {}.
+        try:
+            tenure = abs_region.pull_tenure("SA2")
+        except Exception:
+            tenure = {}
 
         # 5km supply-influx catchment (committed building approvals ÷ dwelling stock)
         centroids = abs_geo.fetch_sa2_centroids()
@@ -360,6 +366,9 @@ def build_analysis() -> dict:
                 "house_unit_ratio": round(h_price / a_price, 2) if (h_price and a_price) else None,
                 "seifa_irsad": round(seifa[code]) if code in seifa else None,
                 "pct_rented": abs_region.latest(m.get("pct_rented", {})),
+                "owner_occupier_pct": (tenure.get(code) or {}).get("owner_occupier_pct"),
+                "owner_occupier_delta": (tenure.get(code) or {}).get("owner_occupier_delta"),
+                "owned_mortgage_pct": (tenure.get(code) or {}).get("owned_mortgage_pct"),
                 "income_growth_pa": round(abs_region.cagr(m.get("employee_income", {})), 1)
                     if abs_region.cagr(m.get("employee_income", {})) is not None else None,
                 "top_industry": div.get("top_industry"),
