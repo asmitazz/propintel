@@ -20,27 +20,42 @@ PREV = ROOT / "data" / "suburb_analysis.prev.json"
 LATEST = ROOT / "data" / "latest_update.md"
 CHANGELOG = ROOT / "data" / "changelog.md"
 
-# The live snapshot the last successful run published. In the cloud (GitHub Actions)
-# the workspace is wiped between runs, so a local prev never survives — without this
-# the digest would say "first update — baseline captured" every single day. We pull
-# the currently-deployed snapshot (i.e. yesterday's) so day-to-day change detection
-# actually works. Locally, refresh.sh writes PREV itself, so this never fires.
-LIVE_SNAPSHOT_URL = "https://asmitazz.github.io/propintel/suburb_analysis.json"
+# In the cloud (GitHub Actions) the workspace is wiped between runs, so a local prev
+# snapshot never survives — without this the digest would say "first update — baseline
+# captured" EVERY day. The live page embeds a compact change-signature (<script
+# id="sersi-sig">); we read yesterday's straight off the deployed site and rebuild a
+# minimal prev from it, so day-to-day change detection works with no server state and
+# no workflow change. Locally, refresh.sh writes PREV itself, so this never fires.
+LIVE_PAGE_URL = "https://asmitazz.github.io/propintel/"
 
 
 def _ensure_prev() -> None:
-    """If no local previous snapshot exists, fetch the currently-deployed one."""
+    """If no local previous snapshot exists, rebuild one from the live page signature."""
     if PREV.exists():
         return
     try:
+        import re
         import urllib.request
-        req = urllib.request.Request(LIVE_SNAPSHOT_URL, headers={"User-Agent": "sersi-digest"})
-        raw = urllib.request.urlopen(req, timeout=30).read()
-        json.loads(raw)                      # sanity-check it's the snapshot JSON
+        req = urllib.request.Request(LIVE_PAGE_URL, headers={"User-Agent": "sersi-digest"})
+        html = urllib.request.urlopen(req, timeout=30).read().decode("utf-8", "ignore")
+        m = re.search(r'<script id="sersi-sig" type="application/json">(.*?)</script>', html, re.S)
+        if not m:
+            return
+        sig = json.loads(m.group(1))
+        subs = []
+        for code, v in sig.get("s", {}).items():
+            name, st, hs, hr, ts, tr, hot, gf = v
+            rec = {"code": code, "name": name, "state": st,
+                   "hotspot": bool(hot), "gentrify_flag": gf}
+            if hs is not None:
+                rec["house"] = {"score": hs, "rank": hr}
+            if ts is not None:
+                rec["townhouse"] = {"score": ts, "rank": tr}
+            subs.append(rec)
         PREV.parent.mkdir(parents=True, exist_ok=True)
-        PREV.write_bytes(raw)
+        PREV.write_text(json.dumps({"generated": sig.get("generated", ""), "suburbs": subs}))
     except Exception:
-        pass   # first deploy ever, or the file isn't live yet — fall back to baseline msg
+        pass   # first deploy with the signature, or site not up yet — show baseline msg
 
 
 def _by_code(path):
@@ -69,10 +84,12 @@ def build_digest() -> str:
 
     prev = _by_code(PREV)
 
-    # Did the underlying ABS data actually change? (prices/scores identical => no release)
+    # Did the underlying ABS data actually change? Scores are deterministic from the
+    # ABS inputs, so identical scores => no release. Uses only fields carried in the
+    # embedded signature, so a page-rebuilt prev compares identically to a full one.
     def sig(s):
-        h = s.get("house") or {}
-        return (round(h.get("price_2024", 0)), (h.get("score")), s.get("hotspot"), s.get("gentrify_flag"))
+        h, t = s.get("house") or {}, s.get("townhouse") or {}
+        return (h.get("score"), t.get("score"), bool(s.get("hotspot")), s.get("gentrify_flag") or "")
     changed_codes = [c for c in curr if c in prev and sig(curr[c]) != sig(prev[c])]
     added = [c for c in curr if c not in prev]
     removed = [c for c in prev if c not in curr]

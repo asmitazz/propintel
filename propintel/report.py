@@ -759,8 +759,17 @@ def build():
     # Preload the Compare tab with the 3 top-scoring house suburbs so it's useful on open.
     cmp_default = [r["name"] for r in sorted(
         recs, key=lambda r: (r.get("house") or {}).get("score", 0), reverse=True)[:3]]
+    # Compact change-signature embedded in the page so tomorrow's run can diff against
+    # it (per code: name, state, house score+rank, townhouse score+rank, hotspot, gentrify).
+    sig = {"generated": data["generated"][:10], "s": {}}
+    for r in recs:
+        h, t = r.get("house") or {}, r.get("townhouse") or {}
+        sig["s"][r["code"]] = [r["name"], r["state"], h.get("score"), h.get("rank"),
+                               t.get("score"), t.get("rank"),
+                               1 if r.get("hotspot") else 0, r.get("gentrify_flag") or ""]
     html = _PAGE.format(
         cmpdefault=json.dumps(cmp_default),
+        sigdata=json.dumps(sig, separators=(",", ":")),
         stratnav=strat_nav, stratblocks=strat_blocks,
         economy=_economy_section(recs), news=_live_news_section() + _news_growth_section(recs),
         scenario=_scenario_section(recs), framework=_framework_note(),
@@ -988,6 +997,9 @@ details{{margin-top:10px}} summary{{cursor:pointer;color:var(--accent);font-size
     <p>Population &amp; regional data © Australian Bureau of Statistics (ABS Data API, "Data by Region"). Policy &amp; catalyst figures from cited government/industry sources.</p>
   </div>
 </div>
+<!-- Compact change-signature: the next day's run reads this from the live page to
+     detect what (if anything) moved — no server state or workflow change needed. -->
+<script id="sersi-sig" type="application/json">{sigdata}</script>
 <script>
 var LOOKUP = {lookupdata};
 var CMP_DEFAULT = {cmpdefault};
