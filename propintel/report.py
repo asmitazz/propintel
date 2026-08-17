@@ -741,7 +741,11 @@ def build():
     n_gentrify = sum(1 for r in recs if r.get("gentrify_flag") == "Gentrifying")
     n_ruled = len(data.get("ruled_out_oversupply", []))
     n_hotspot = sum(1 for r in recs if r.get("hotspot"))
+    # Preload the Compare tab with the 3 top-scoring house suburbs so it's useful on open.
+    cmp_default = [r["name"] for r in sorted(
+        recs, key=lambda r: (r.get("house") or {}).get("score", 0), reverse=True)[:3]]
     html = _PAGE.format(
+        cmpdefault=json.dumps(cmp_default),
         stratnav=strat_nav, stratblocks=strat_blocks,
         economy=_economy_section(recs), news=_live_news_section() + _news_growth_section(recs),
         scenario=_scenario_section(recs), framework=_framework_note(),
@@ -819,6 +823,22 @@ h3.ph{{font-size:14px;color:var(--muted);text-transform:uppercase;letter-spacing
 .lookup input{{width:100%;padding:12px 14px;font-size:15px;border:1px solid var(--line);border-radius:10px;background:var(--panel);color:var(--ink)}}
 .lookup input:focus{{outline:none;border-color:var(--accent)}}
 .pricebasis{{font-size:12px;color:var(--muted);background:var(--accent-soft);border:1px solid var(--line);border-radius:8px;padding:8px 12px;margin-top:8px}}
+/* ---- Compare tab ---- */
+#cmpq{{width:100%;padding:12px 14px;font-size:15px;border:1px solid var(--line);border-radius:10px;background:var(--panel);color:var(--ink)}}
+#cmpq:focus{{outline:none;border-color:var(--accent)}}
+#cmpSuggest{{margin-top:6px;display:flex;flex-wrap:wrap;gap:4px}}
+.cmpadd{{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:6px 10px;font-size:13px;cursor:pointer;color:var(--ink)}}
+.cmpadd:hover{{background:var(--accent-soft);border-color:var(--accent)}}
+.cmpchips{{display:flex;flex-wrap:wrap;gap:6px;margin:12px 0}}
+.cmpchip{{background:var(--accent-soft);border:1px solid var(--line);border-radius:999px;padding:5px 12px;font-size:13px;font-weight:600}}
+.cmpchip b{{cursor:pointer;color:var(--muted);margin-left:6px}}
+.cmpchip b:hover{{color:var(--accent)}}
+.cmptable{{border-collapse:collapse;min-width:520px}}
+.cmptable th,.cmptable td{{border:1px solid var(--line);padding:7px 10px;font-size:13px;text-align:left;vertical-align:top}}
+.cmptable thead th{{background:var(--panel);font-weight:700}}
+.cmptable td a{{color:var(--accent)}}
+.cmpmetric{{color:var(--muted);font-weight:600;white-space:nowrap}}
+.cmpbest{{background:var(--accent-soft);font-weight:700}}
 #lookupResults{{margin-top:10px}}
 .lucard{{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px 14px;margin-bottom:8px}}
 .lucard h4{{margin:0 0 6px;font-size:15px}}
@@ -889,6 +909,7 @@ details{{margin-top:10px}} summary{{cursor:pointer;color:var(--accent);font-size
   <nav class="sidebar">
     <button class="ptab active" onclick="showPage('summary')">⭐ Summary</button>
     <button class="ptab" onclick="showPage('shortlist')">📊 Shortlist</button>
+    <button class="ptab" onclick="showPage('compare')">⚖️ Compare</button>
     <button class="ptab" onclick="showPage('trends')">📈 Trends</button>
     <button class="ptab" onclick="showPage('outlook')">🔮 10yr Outlook</button>
     <button class="ptab" onclick="showPage('economy')">🏭 Economy</button>
@@ -908,6 +929,15 @@ details{{margin-top:10px}} summary{{cursor:pointer;color:var(--accent);font-size
   <p class="sub">Composite score (0–100) per asset = yield 15 · <b>gentrification 12</b> · population growth 12 · net migration 10 · <b>ripple 10</b> · affordability 9 · industry diversity 9 · supply scarcity 8 · runway (not-already-run) 6 · economic health 4 · liquidity 5. <b>Ripple</b> = % below similar-income neighbours within 10km (arbitrage upside). <b>Econ base</b> = industry mix (Anchor / Mixed / Commodity — hover for top-3). <b>SES</b> = socio-economic decile (1 = most disadvantaged): <span class="hit">▲ gentrifying</span> · <span class="warn-flag">▼ trap</span>. <b>Cycle</b>: <span class="badge b-early">Early</span> · <span class="badge b-mid">Mid</span> · <span class="badge b-late">Late</span>. <b>Houses</b> = land play; <b>Townhouses/villas</b> = lower entry, higher yield.</p>
   <div class="strat-tabs">{stratnav}</div>
   {stratblocks}
+  </div>
+
+  <div class="page" id="page-compare">
+  <h2>Compare suburbs side by side</h2>
+  <p class="sub">Add any suburbs — from the shortlist or the full 1,873 — and line them up across every metric at once. This is the head-to-head the per-suburb lookup can't give you; the <span class="hit">best value in each row is highlighted</span>. Hazard and per-bedroom links are in the last rows for each.</p>
+  <input id="cmpq" type="text" placeholder="➕ Add a suburb to compare — type a name (e.g. Gladstone, Spearwood)…" oninput="cmpSuggest(this.value)" autocomplete="off">
+  <div id="cmpSuggest"></div>
+  <div id="cmpChips" class="cmpchips"></div>
+  <div id="cmpTable" class="tablewrap"></div>
   </div>
 
   <div class="page" id="page-trends">{trends}</div>
@@ -944,6 +974,7 @@ details{{margin-top:10px}} summary{{cursor:pointer;color:var(--accent);font-size
 </div>
 <script>
 var LOOKUP = {lookupdata};
+var CMP_DEFAULT = {cmpdefault};
 function fmtAsset(label, a){{
   if(!a) return '<div><span>'+label+':</span> —</div>';
   var gy=(a[5]!=null?a[5]:a[4]);
@@ -1013,6 +1044,70 @@ function doLookup(q){{
       '</div></div>';
   }}).join('');
 }}
+// ---- Compare tab: side-by-side across every metric ----
+var CMP=[];
+function cmpSuggest(q){{
+  var box=document.getElementById('cmpSuggest');
+  q=(q||'').trim().toLowerCase();
+  if(q.length<2){{box.innerHTML='';return;}}
+  var hits=LOOKUP.filter(function(s){{return s.n.toLowerCase().indexOf(q)>=0 && CMP.indexOf(s)<0;}}).slice(0,8);
+  box.innerHTML=hits.map(function(s){{
+    return '<button class="cmpadd" onclick="cmpAdd('+JSON.stringify(s.n)+')">+ '+s.n+' <span class="sub2">'+s.st+'</span></button>';
+  }}).join('');
+}}
+function cmpAdd(name){{
+  var s=LOOKUP.filter(function(x){{return x.n===name;}})[0];
+  if(s && CMP.indexOf(s)<0) CMP.push(s);
+  document.getElementById('cmpq').value=''; document.getElementById('cmpSuggest').innerHTML='';
+  renderCompare();
+}}
+function cmpRemove(name){{ CMP=CMP.filter(function(s){{return s.n!==name;}}); renderCompare(); }}
+function cmpYld(a){{ return a? (a[5]!=null?a[5]:a[4]) : null; }}
+var CMP_ROWS=[
+  {{l:'State', g:function(s){{return s.st;}}}},
+  {{l:'House price (est)', g:function(s){{return s.h?s.h[0]:null;}}, f:function(v){{return v==null?'—':'$'+v.toLocaleString();}}}},
+  {{l:'House gross yield', dir:'high', g:function(s){{return cmpYld(s.h);}}, f:function(v){{return v==null?'—':v.toFixed(1)+'%';}}}},
+  {{l:'House cycle', g:function(s){{return s.h?s.h[3]:'—';}}}},
+  {{l:'House score /100', dir:'high', g:function(s){{return s.h?s.h[1]:null;}}}},
+  {{l:'Townhouse price (est)', g:function(s){{return s.t?s.t[0]:null;}}, f:function(v){{return v==null?'—':'$'+v.toLocaleString();}}}},
+  {{l:'Townhouse gross yield', dir:'high', g:function(s){{return cmpYld(s.t);}}, f:function(v){{return v==null?'—':v.toFixed(1)+'%';}}}},
+  {{l:'Projected 10yr growth', dir:'high', g:function(s){{return s.pj;}}, f:function(v){{return v==null?'—':'+'+v+'%';}}}},
+  {{l:'Pop growth /yr', dir:'high', g:function(s){{return s.pg;}}, f:function(v){{return v==null?'—':v+'%';}}}},
+  {{l:'Net migration /1k', dir:'high', g:function(s){{return s.mig;}}}},
+  {{l:'Ripple (below peers)', dir:'high', g:function(s){{return s.rp;}}, f:function(v){{return v==null?'—':v+'%';}}}},
+  {{l:'Owner-occupier %', dir:'high', g:function(s){{return s.oo;}}, f:function(v){{return v==null?'—':v+'%';}}}},
+  {{l:'OO traction vs 2016', dir:'high', g:function(s){{return s.od;}}, f:function(v){{return v==null?'—':(v>0?'+':'')+v+'pp';}}}},
+  {{l:'Housing mix H/T/F', g:function(s){{return s.dh==null?'—':(s.dh+'/'+s.dt+'/'+s.df+'%');}}}},
+  {{l:'Supply 5km (low=better)', dir:'low', g:function(s){{return s.sup;}}, f:function(v){{return v==null?'—':v+'%';}}}},
+  {{l:'Socio-economic', g:function(s){{return s.ses==null?'—':('decile '+s.ses+(s.gf==='Gentrifying'?' ▲':''));}}}},
+  {{l:'Economy', g:function(s){{return s.eb||'—';}}}},
+  {{l:'Top industries', g:function(s){{return (s.i3&&s.i3.length)?s.i3.join(', '):'—';}}}},
+  {{l:'⚠️ Hazard check', g:function(s){{return hazLink(s,'flood','🌊 Flood')+' · '+hazLink(s,'bush','🔥 Bushfire');}}}},
+  {{l:'Prices by config', g:function(s){{return bedLink(s,2)+' · '+bedLink(s,3)+' · '+bedLink(s,4);}}}}
+];
+function renderCompare(){{
+  var chips=document.getElementById('cmpChips'), tbl=document.getElementById('cmpTable');
+  chips.innerHTML=CMP.map(function(s){{
+    return '<span class="cmpchip">'+s.n+' · '+s.st+' <b onclick="cmpRemove('+JSON.stringify(s.n)+')">×</b></span>';
+  }}).join('');
+  if(!CMP.length){{tbl.innerHTML='<p class="panel-note">No suburbs added yet — search above to add two or more.</p>';return;}}
+  var html='<table class="cmptable"><thead><tr><th>Metric</th>'+
+    CMP.map(function(s){{return '<th>'+s.n+'<br><span class="sub2">'+s.st+'</span></th>';}}).join('')+'</tr></thead><tbody>';
+  CMP_ROWS.forEach(function(r){{
+    var vals=CMP.map(r.g), best=null;
+    if(r.dir){{
+      var nums=vals.filter(function(v){{return typeof v==='number';}});
+      if(nums.length>1) best=(r.dir==='high'?Math.max.apply(null,nums):Math.min.apply(null,nums));
+    }}
+    html+='<tr><td class="cmpmetric">'+r.l+'</td>'+vals.map(function(v){{
+      var disp=r.f?r.f(v):(v==null?'—':v);
+      var cls=(best!=null&&v===best)?' class="cmpbest"':'';
+      return '<td'+cls+'>'+disp+'</td>';
+    }}).join('')+'</tr>';
+  }});
+  tbl.innerHTML=html+'</tbody></table>';
+}}
+try{{ (CMP_DEFAULT||[]).forEach(cmpAdd); }}catch(e){{}}
 function showPage(id){{
   document.querySelectorAll('.page').forEach(function(p){{p.classList.toggle('active',p.id==='page-'+id)}});
   document.querySelectorAll('.ptab').forEach(function(b){{b.classList.toggle('active',b.getAttribute('onclick').indexOf("'"+id+"'")>=0)}});
