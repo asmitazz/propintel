@@ -20,6 +20,28 @@ PREV = ROOT / "data" / "suburb_analysis.prev.json"
 LATEST = ROOT / "data" / "latest_update.md"
 CHANGELOG = ROOT / "data" / "changelog.md"
 
+# The live snapshot the last successful run published. In the cloud (GitHub Actions)
+# the workspace is wiped between runs, so a local prev never survives — without this
+# the digest would say "first update — baseline captured" every single day. We pull
+# the currently-deployed snapshot (i.e. yesterday's) so day-to-day change detection
+# actually works. Locally, refresh.sh writes PREV itself, so this never fires.
+LIVE_SNAPSHOT_URL = "https://asmitazz.github.io/propintel/suburb_analysis.json"
+
+
+def _ensure_prev() -> None:
+    """If no local previous snapshot exists, fetch the currently-deployed one."""
+    if PREV.exists():
+        return
+    try:
+        import urllib.request
+        req = urllib.request.Request(LIVE_SNAPSHOT_URL, headers={"User-Agent": "sersi-digest"})
+        raw = urllib.request.urlopen(req, timeout=30).read()
+        json.loads(raw)                      # sanity-check it's the snapshot JSON
+        PREV.parent.mkdir(parents=True, exist_ok=True)
+        PREV.write_bytes(raw)
+    except Exception:
+        pass   # first deploy ever, or the file isn't live yet — fall back to baseline msg
+
 
 def _by_code(path):
     return {s["code"]: s for s in json.loads(path.read_text())["suburbs"]}
@@ -37,6 +59,7 @@ def build_digest() -> str:
         return _write(today, "No analysis found — run `analyze` first.")
     curr = _by_code(CURR)
 
+    _ensure_prev()   # cloud runs have no local prev — pull the deployed snapshot
     if not PREV.exists():
         lines = ["First update — baseline captured. From tomorrow I'll report only what changes.",
                  "", f"Tracking **{len(curr):,}** suburbs. "

@@ -10,8 +10,23 @@ from __future__ import annotations
 
 import json
 import re
+from datetime import datetime, timezone
 
 from .config import ROOT
+
+
+def _built_stamp() -> str:
+    """Timestamp for when this report was generated — proves the daily refresh ran,
+    even on days ABS releases nothing new. Australian time where available."""
+    try:
+        from zoneinfo import ZoneInfo
+        now = datetime.now(ZoneInfo("Australia/Sydney"))
+        return now.strftime("%a %-d %b %Y, %-I:%M%p %Z")
+    except Exception:
+        try:
+            return datetime.now(timezone.utc).strftime("%a %d %b %Y, %H:%M UTC")
+        except Exception:
+            return datetime.now().strftime("%a %d %b %Y, %H:%M")
 
 OUTPUT = ROOT / "reports" / "emerging-growth-report.html"
 ANALYSIS = ROOT / "data" / "suburb_analysis.json"
@@ -756,7 +771,7 @@ def build():
         lookupdata=_lookup_data(recs, live),
         total=data["count"], n_house=data["n_house"], n_townhouse=data["n_townhouse"],
         n_gentrify=n_gentrify, n_ruled=n_ruled, n_hotspot=n_hotspot,
-        generated=data["generated"][:10],
+        generated=data["generated"][:10], built=_built_stamp(),
     )
     OUTPUT.parent.mkdir(parents=True, exist_ok=True)   # reports/ isn't tracked in git
     OUTPUT.write_text(html)
@@ -896,7 +911,7 @@ details{{margin-top:10px}} summary{{cursor:pointer;color:var(--accent);font-size
     <div class="kicker">🛰 Sersi · Australian property research agent</div>
     <h1>Where Australia's next capital growth is being built</h1>
     <p class="lede"><b>Sersi is an automated agent</b> that scores every Australian suburb on the fundamentals that drive capital growth <b>before price moves</b> — refreshed daily from public ABS data, the government funding/jobs pipeline and live news. Start with the shortlist below, or jump to any tab.</p>
-    <div class="meta">Updated {generated} · public data only · not financial advice — see footer</div>
+    <div class="meta">🔄 Last refreshed {built} · public data only · not financial advice — see footer</div>
   </header>
 
 
@@ -969,7 +984,8 @@ details{{margin-top:10px}} summary{{cursor:pointer;color:var(--accent);font-size
     <p><b>What Sersi is:</b> an automated research agent that ranks Australian suburbs on the macro fundamentals that drive capital growth, rebuilt daily from 100% free public data (ABS + state valuers-general) — no listings, Domain-free.</p>
     <p><b>Not financial advice.</b> General information only, not personal financial or investment advice. Do your own research and seek licensed advice before acting.</p>
     <p><b>About the prices:</b> figures are <b>ABS SA2-area sold-transfer medians</b> (a whole statistical area, not one named suburb), 2024 vintage escalated ~2.5yr to today. They typically read <b>below realestate.com.au</b> (named-suburb asking/AVM) and can be off 10–20% for a single suburb, so use them for <b>relative ranking</b> and verify the live median via the link in each lookup before acting. Accurate current medians need a paid source (Domain <i>Business</i> plan or CoreLogic/Cotality) — the free tier only carries listings.</p>
-    <p>Updated {generated}. Population &amp; regional data © Australian Bureau of Statistics (ABS Data API, "Data by Region"). Policy &amp; catalyst figures from cited government/industry sources.</p>
+    <p class="refreshline"><b>🔄 Last refreshed:</b> {built}. Sersi re-runs the full pipeline automatically every morning (~7am AEST). <b>Data vintage:</b> {generated} — ABS "Data by Region" only updates a few times a year, so on most days there's <b>no material change</b> and the daily update above will say so; the page is still rebuilt and re-verified each morning.</p>
+    <p>Population &amp; regional data © Australian Bureau of Statistics (ABS Data API, "Data by Region"). Policy &amp; catalyst figures from cited government/industry sources.</p>
   </div>
 </div>
 <script>
