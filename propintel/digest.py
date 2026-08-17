@@ -11,9 +11,19 @@ rankings are unchanged without checking.
 from __future__ import annotations
 
 import json
-from datetime import date
+from datetime import date, datetime
 
 from .config import ROOT
+
+
+def _today_aest() -> str:
+    """Australian date. The daily run fires at 21:00 UTC = 07:00 AEST *next* day, so a
+    UTC date would always read a day behind for an Australian reader."""
+    try:
+        from zoneinfo import ZoneInfo
+        return str(datetime.now(ZoneInfo("Australia/Sydney")).date())
+    except Exception:
+        return str(date.today())
 
 CURR = ROOT / "data" / "suburb_analysis.json"
 PREV = ROOT / "data" / "suburb_analysis.prev.json"
@@ -69,7 +79,7 @@ def _topn(m, asset, n=10):
 
 
 def build_digest() -> str:
-    today = str(date.today())
+    today = _today_aest()
     if not CURR.exists():
         return _write(today, "No analysis found — run `analyze` first.")
     curr = _by_code(CURR)
