@@ -42,6 +42,14 @@ RELEVANCE = re.compile(
     r"project|jobs|employ|migrat|population|suburb|property|price|rent|vacanc|development|stamp duty|"
     r"first home|interest rate|construction)\b", re.I)
 
+# Low-signal items to drop even if they mention a relevant keyword — pure transcripts,
+# press conferences, interviews and photo-ops carry no fundamentals signal to track.
+NOISE = re.compile(
+    r"^\s*(press conference|doorstop|door stop|transcript|radio interview|"
+    r"television interview|tv interview|interview with|press statement|"
+    r"joint (press|doorstop)|readout|remarks|op-?ed|opinion[: ]|speech[: ]|"
+    r"address to|photo)\b", re.I)
+
 STATES = {
     "NSW": ["nsw", "new south wales", "sydney", "newcastle", "hunter", "wollongong", "parramatta", "dubbo", "central-west orana"],
     "VIC": ["vic", "victoria", "victorian", "melbourne", "geelong", "ballarat", "bendigo", "gippsland", "latrobe", "suburban rail loop"],
@@ -116,6 +124,8 @@ def fetch_all() -> dict:
                 text = f'{item["title"]} {item["desc"]}'
                 if not RELEVANCE.search(text):
                     continue
+                if NOISE.search(item["title"]):        # drop transcripts / pressers / photo-ops
+                    continue
                 if item["link"] in seen:
                     continue
                 item["tags"] = _geo_tags(text)
@@ -125,7 +135,9 @@ def fetch_all() -> dict:
         except Exception:
             continue
 
-    items = sorted(seen.values(), key=lambda i: i.get("first_seen", ""), reverse=True)[:MAX_ITEMS]
+    # also drop any noise items already stored from before this filter existed
+    kept = [i for i in seen.values() if not NOISE.search(i.get("title", ""))]
+    items = sorted(kept, key=lambda i: i.get("first_seen", ""), reverse=True)[:MAX_ITEMS]
     NEWS_FILE.write_text(json.dumps({"generated": today, "new_today": new_count, "items": items}, indent=1))
     return {"new_today": new_count, "total": len(items)}
 
