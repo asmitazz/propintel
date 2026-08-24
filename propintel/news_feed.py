@@ -47,8 +47,8 @@ RELEVANCE = re.compile(
 NOISE = re.compile(
     r"^\s*(press conference|doorstop|door stop|transcript|radio interview|"
     r"television interview|tv interview|interview with|press statement|"
-    r"joint (press|doorstop)|readout|remarks|op-?ed|opinion[: ]|speech[: ]|"
-    r"address to|photo)\b", re.I)
+    r"joint (press|doorstop|statement)|readout|remarks|op-?ed|opinion[: ]|speech[: ]|"
+    r"address to|photo|passing of|obituary|condolence|death of)\b", re.I)
 
 STATES = {
     "NSW": ["nsw", "new south wales", "sydney", "newcastle", "hunter", "wollongong", "parramatta", "dubbo", "central-west orana"],
