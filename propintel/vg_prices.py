@@ -18,7 +18,11 @@ NSW comparable-sales (individual PSI records) is a separate, later feature.
 """
 from __future__ import annotations
 
+import io
 import json
+import statistics
+import zipfile
+from collections import defaultdict
 
 from curl_cffi import requests as cf
 
@@ -127,6 +131,65 @@ def pull_vic_medians() -> dict[str, dict]:
         out.setdefault(sub, {})["u"] = med
         out[sub]["u_asof"] = u_asof
     return out
+
+
+# --- NSW: real named-suburb medians from the free CC Property Sales Information -------------
+_NSW_YEAR = "2025"   # latest full-year archive (a zip of weekly zips of per-district .DAT)
+
+
+def _nsw_parse(text: str, house: dict, attached: dict) -> None:
+    for line in text.splitlines():
+        if not line.startswith("B;"):
+            continue
+        f = line.split(";")
+        if len(f) < 19 or f[18].strip().upper() != "RESIDENCE":
+            continue
+        loc = f[9].strip().upper()
+        try:
+            price = int(f[15])
+        except (ValueError, IndexError):
+            continue
+        if price < 200000 or not loc:            # floor out non-arm's-length transfers
+            continue
+        (attached if f[6].strip() else house)[loc].append(price)   # unit no. => strata/attached
+
+
+def _nsw_zip(raw: bytes, house: dict, attached: dict) -> None:
+    z = zipfile.ZipFile(io.BytesIO(raw))
+    for name in z.namelist():
+        if name.lower().endswith(".zip"):
+            _nsw_zip(z.read(name), house, attached)
+        elif name.upper().endswith(".DAT"):
+            _nsw_parse(z.read(name).decode("latin-1", "ignore"), house, attached)
+
+
+def pull_nsw_medians() -> dict[str, dict]:
+    """{SUBURB_UPPER: {"h": house_median, "a": attached_median, "asof": "2025", "n": count}}.
+
+    Real NSW sold medians for EVERY locality, split house vs attached (strata-titled
+    unit/townhouse/villa) via the unit-number field. Display-only overlay like VIC;
+    degrades to {} on any failure. Median-only (no individual addresses) for the public site."""
+    try:
+        r = cf.get(f"https://www.valuergeneral.nsw.gov.au/__psi/yearly/{_NSW_YEAR}.zip",
+                   impersonate="chrome", timeout=180)
+        if r.status_code != 200 or not r.content:
+            return {}
+        house: dict[str, list] = defaultdict(list)
+        attached: dict[str, list] = defaultdict(list)
+        _nsw_zip(r.content, house, attached)
+        out: dict[str, dict] = {}
+        for loc in set(house) | set(attached):
+            h, a = house.get(loc, []), attached.get(loc, [])
+            if len(h) + len(a) < 8:              # skip thin suburbs — unreliable median
+                continue
+            out[loc] = {
+                "h": int(statistics.median(h)) if h else None,
+                "a": int(statistics.median(a)) if a else None,
+                "asof": _NSW_YEAR, "n": len(h) + len(a),
+            }
+        return out
+    except Exception:
+        return {}
 
 
 if __name__ == "__main__":

@@ -303,6 +303,10 @@ def build_analysis() -> dict:
             vg_vic = vg_prices.pull_vic_medians()
         except Exception:
             vg_vic = {}
+        try:
+            vg_nsw = vg_prices.pull_nsw_medians()
+        except Exception:
+            vg_nsw = {}
 
         # 5km supply-influx catchment (committed building approvals ÷ dwelling stock)
         centroids = abs_geo.fetch_sa2_centroids()
@@ -477,22 +481,34 @@ def build_analysis() -> dict:
         # Attach real VG suburb medians ONLY on an EXACT name match (uppercased/trimmed) —
         # no fuzzy splitting of composite SA2 names, which would attach a confidently wrong
         # number. Display-only; the score is untouched. Report coverage so it's auditable.
-        vg_hits = 0
-        vic_total = sum(1 for r in records if r["state"] == "VIC")
-        for r in records:
-            if r["state"] != "VIC":
-                continue
-            v = vg_vic.get(r["name"].strip().upper())
-            if v:
-                r["vg_source"] = "Valuer-General Victoria"
-                if v.get("h"):
-                    r["vg_median"], r["vg_asof"] = v["h"], v.get("h_asof")
-                if v.get("u"):
-                    r["vg_unit_median"], r["vg_unit_asof"] = v["u"], v.get("u_asof")
-                vg_hits += 1
-        if vic_total:
-            print(f"  VG VIC: {len(vg_vic)} suburbs; exact-matched {vg_hits}/{vic_total} VIC SA2s "
-                  f"({100*vg_hits//max(vic_total,1)}%)")
+        def _attach_vg(state, table, source, setter):
+            hits, tot = 0, sum(1 for r in records if r["state"] == state)
+            for r in records:
+                if r["state"] != state:
+                    continue
+                v = table.get(r["name"].strip().upper())
+                if v:
+                    setter(r, v)
+                    r["vg_source"] = source
+                    hits += 1
+            if tot:
+                print(f"  VG {state}: {len(table)} suburbs; exact-matched {hits}/{tot} "
+                      f"{state} SA2s ({100 * hits // max(tot, 1)}%)")
+
+        def _set_vic(r, v):
+            if v.get("h"):
+                r["vg_median"], r["vg_asof"] = v["h"], v.get("h_asof")
+            if v.get("u"):
+                r["vg_unit_median"], r["vg_unit_asof"] = v["u"], v.get("u_asof")
+
+        def _set_nsw(r, v):
+            if v.get("h"):
+                r["vg_median"], r["vg_asof"] = v["h"], v.get("asof")
+            if v.get("a"):
+                r["vg_unit_median"], r["vg_unit_asof"] = v["a"], v.get("asof")
+
+        _attach_vg("VIC", vg_vic, "Valuer-General Victoria", _set_vic)
+        _attach_vg("NSW", vg_nsw, "Valuer-General NSW", _set_nsw)
 
         ruled_out.sort(key=lambda r: max(r.get("suburb_influx_pct") or 0, r.get("catchment_influx_pct") or 0), reverse=True)
         OUTPUT.write_text(json.dumps({
@@ -502,7 +518,7 @@ def build_analysis() -> dict:
             "ruled_out_oversupply": ruled_out,
             "trends": trends,
             "projections": projections,
-            "vg_medians": {"VIC": vg_vic},   # real named-suburb medians for the lookup layer
+            "vg_medians": {"VIC": vg_vic, "NSW": vg_nsw},   # real named-suburb medians (lookup layer)
             "suburbs": records,
         }, indent=1))
         finish_run(conn, run_id, len(records), 0, "ok",
