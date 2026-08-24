@@ -168,14 +168,18 @@ def _catalyst_freshness() -> str:
     return ""
 
 
-# Theme buckets in priority order (most likely to move property fundamentals first).
+# Theme buckets in priority order. The first four are the CORE property/infra/funding
+# themes shown in the daily "what to check" list; "Jobs/industry" (index 4) and the
+# General fallback are intentionally OUTSIDE the core so broad diplomacy / defence-
+# cooperation / photo-op items don't leak into the property digest.
 _NEWS_THEMES = [
-    ("💰 Funding", re.compile(r"(\bbillion\b|\bmillion\b|\$[0-9]|\bfund|\bgrant|\bbudget\b|\binvest|\bfinanc)", re.I)),
-    ("🏗 Infrastructure", re.compile(r"\b(rail|metro|highway|motorway|road|airport|seaport|port|hospital|precinct|tunnel|construction|upgrade|interchange|bridge|station)\b", re.I)),
-    ("🏛 Policy/planning", re.compile(r"\b(rezon\w*|planning|stamp duty|first[- ]home|interest rate|housing target|land release|dwelling|zoning|approval|reform)\b", re.I)),
+    ("💰 Funding", re.compile(r"(\bbillion\b|\bmillion\b|\$[0-9]|\bfund(ing|ed)?\b|\bgrant\b|\bbudget\b|\binvest(ment|ing|ed)?\b|\bfinanc)", re.I)),
+    ("🏗 Infrastructure", re.compile(r"\b(rail|metro|light rail|highway|motorway|freeway|road|airport|seaport|port|hospital|precinct|tunnel|construction|upgrade|interchange|bridge|station|infrastructure|pipeline|desalinat\w*|water treatment)\b", re.I)),
+    ("🏛 Policy/planning", re.compile(r"\b(rezon\w*|planning|stamp duty|first[- ]home|interest rate|land release|dwelling|zoning|approval|planning reform|housing (target|strateg\w*|supply|reform|policy|accord|plan))\b", re.I)),
+    ("🏠 Housing/property", re.compile(r"\b(housing|homes?|home build|new homes|apartment\w*|townhouse\w*|subdivision|estate|greenfield|development|\bsupply\b|property|rent|rents|vacanc\w*|median|auction|price|prices|sales|listings|build[- ]to[- ]rent)\b", re.I)),
     ("👷 Jobs/industry", re.compile(r"\b(jobs|employ\w*|defence|aukus|hydrogen|renewable|solar|wind|battery|energy|manufactur\w*|universit\w*|campus|mine|mining|gigafactory)\b", re.I)),
-    ("🏠 Housing market", re.compile(r"\b(price|prices|rent|rents|vacanc\w*|median|auction|property|sales|listings)\b", re.I)),
 ]
+_CORE_THEMES = 4   # indices 0-3 are property/infra/funding; 4+ are excluded from the digest
 
 
 def _classify_news(it: dict):
@@ -208,9 +212,14 @@ def _news_line() -> str:
         ranked = []
         for it in fresh:
             ti, label = _classify_news(it)
+            if ti >= _CORE_THEMES:                           # property/infra/funding only
+                continue
             has_geo = 0 if it.get("tags") else 1             # geo-tagged items rank first
             ranked.append((ti, has_geo, label, it))
         ranked.sort(key=lambda x: (x[0], x[1]))
+        if not ranked:
+            return ("\n\n📰 **What's new to check** — no major property, infrastructure or "
+                    "funding headlines in today's pull. See the News tab for the full feed.")
 
         # Diversify: lead with the top item from each theme so the reader sees the full
         # spread (funding / infrastructure / policy / jobs / market), not 5 of one bucket.
@@ -228,8 +237,8 @@ def _news_line() -> str:
                 picked.append((label, it)); seen.add(id(it))
         picked = picked[:5]
 
-        lines = [f"\n\n📰 **What's new to check** — {len(fresh)} headline(s) today; "
-                 f"the ones most likely to move fundamentals:"]
+        lines = [f"\n\n📰 **What's new to check** — {len(ranked)} property, infrastructure "
+                 f"&amp; funding headline(s) in today's pull; the ones most worth a look:"]
         for label, it in picked:
             geo = ", ".join(it.get("tags") or []) or "National"
             title = esc((it.get("title") or "").strip())[:110]
