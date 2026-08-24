@@ -22,7 +22,7 @@ from __future__ import annotations
 import json
 import math
 
-from . import abs_client, abs_geo, abs_region
+from . import abs_client, abs_geo, abs_region, vg_prices
 from .config import ROOT
 from .db import connect, finish_run, now_iso, start_run, state_from_sa2
 
@@ -298,6 +298,11 @@ def build_analysis() -> dict:
             dwmix = abs_region.pull_dwelling_mix("SA2")
         except Exception:
             dwmix = {}
+        # State Valuer-General real named-suburb medians (display-only overlay, NOT scored).
+        try:
+            vg_vic = vg_prices.pull_vic_medians()
+        except Exception:
+            vg_vic = {}
 
         # 5km supply-influx catchment (committed building approvals ÷ dwelling stock)
         centroids = abs_geo.fetch_sa2_centroids()
@@ -469,6 +474,26 @@ def build_analysis() -> dict:
             else:
                 r["proj_pop_growth_10yr"] = sp
 
+        # Attach real VG suburb medians ONLY on an EXACT name match (uppercased/trimmed) —
+        # no fuzzy splitting of composite SA2 names, which would attach a confidently wrong
+        # number. Display-only; the score is untouched. Report coverage so it's auditable.
+        vg_hits = 0
+        vic_total = sum(1 for r in records if r["state"] == "VIC")
+        for r in records:
+            if r["state"] != "VIC":
+                continue
+            v = vg_vic.get(r["name"].strip().upper())
+            if v:
+                r["vg_source"] = "Valuer-General Victoria"
+                if v.get("h"):
+                    r["vg_median"], r["vg_asof"] = v["h"], v.get("h_asof")
+                if v.get("u"):
+                    r["vg_unit_median"], r["vg_unit_asof"] = v["u"], v.get("u_asof")
+                vg_hits += 1
+        if vic_total:
+            print(f"  VG VIC: {len(vg_vic)} suburbs; exact-matched {vg_hits}/{vic_total} VIC SA2s "
+                  f"({100*vg_hits//max(vic_total,1)}%)")
+
         ruled_out.sort(key=lambda r: max(r.get("suburb_influx_pct") or 0, r.get("catchment_influx_pct") or 0), reverse=True)
         OUTPUT.write_text(json.dumps({
             "generated": now_iso(), "count": len(records), "weights": WEIGHTS,
@@ -477,6 +502,7 @@ def build_analysis() -> dict:
             "ruled_out_oversupply": ruled_out,
             "trends": trends,
             "projections": projections,
+            "vg_medians": {"VIC": vg_vic},   # real named-suburb medians for the lookup layer
             "suburbs": records,
         }, indent=1))
         finish_run(conn, run_id, len(records), 0, "ok",

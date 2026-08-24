@@ -738,6 +738,7 @@ def _lookup_data(recs: list[dict], live: dict) -> str:
             "od": r.get("owner_occupier_delta"),    # change in that share 2016->2021 (traction)
             "om": r.get("owned_mortgage_pct"),      # owned-with-mortgage % (recent OO buyers)
             "dh": r.get("pct_house"), "dt": r.get("pct_townhouse"), "df": r.get("pct_flat"),
+            "vm": r.get("vg_median"), "vu": r.get("vg_unit_median"),   # real VG sold medians
         })
     return json.dumps(out, separators=(",", ":"))
 
@@ -767,9 +768,16 @@ def build():
         sig["s"][r["code"]] = [r["name"], r["state"], h.get("score"), h.get("rank"),
                                t.get("score"), t.get("rank"),
                                1 if r.get("hotspot") else 0, r.get("gentrify_flag") or ""]
+    # Real Valuer-General named-suburb medians for the search layer: {SUBURB:[house,unit]}.
+    vg_vic = (data.get("vg_medians") or {}).get("VIC") or {}
+    vgmed = {sub: [v.get("h"), v.get("u")] for sub, v in vg_vic.items()}
+    vg_asof = {"h": next((v["h_asof"] for v in vg_vic.values() if v.get("h_asof")), ""),
+               "u": next((v["u_asof"] for v in vg_vic.values() if v.get("u_asof")), "")}
     html = _PAGE.format(
         cmpdefault=json.dumps(cmp_default),
         sigdata=json.dumps(sig, separators=(",", ":")),
+        vgmed=json.dumps(vgmed, separators=(",", ":")),
+        vgasof=json.dumps(vg_asof, separators=(",", ":")),
         stratnav=strat_nav, stratblocks=strat_blocks,
         economy=_economy_section(recs), news=_live_news_section() + _news_growth_section(recs),
         scenario=_scenario_section(recs), framework=_framework_note(),
@@ -863,6 +871,8 @@ h3.ph{{font-size:14px;color:var(--muted);text-transform:uppercase;letter-spacing
 .cmptable td a{{color:var(--accent)}}
 .cmpmetric{{color:var(--muted);font-weight:600;white-space:nowrap}}
 .cmpbest{{background:var(--accent-soft);font-weight:700}}
+.vgline{{background:var(--accent-soft);border-radius:6px;padding:4px 8px}}
+.vgcard{{border-left:3px solid var(--accent)}}
 #lookupResults{{margin-top:10px}}
 .lucard{{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px 14px;margin-bottom:8px}}
 .lucard h4{{margin:0 0 6px;font-size:15px}}
@@ -1003,6 +1013,8 @@ details{{margin-top:10px}} summary{{cursor:pointer;color:var(--accent);font-size
 <script>
 var LOOKUP = {lookupdata};
 var CMP_DEFAULT = {cmpdefault};
+var VGMED = {vgmed};        // {{SUBURB: [house_median, unit_median]}} real VG sold medians
+var VG_ASOF = {vgasof};     // {{h:"Oct-Dec 2025", u:"Oct-Dec 2024"}}
 function fmtAsset(label, a){{
   if(!a) return '<div><span>'+label+':</span> —</div>';
   var gy=(a[5]!=null?a[5]:a[4]);
@@ -1034,18 +1046,36 @@ function bedLink(s, n){{
   return '<a target="_blank" rel="noopener" href="https://www.realestate.com.au/sold/property-house-with-'+
     n+'-bedrooms-in-'+reaSlug(s)+'/list-1">'+n+'BR</a>';
 }}
+function vgSearch(q){{
+  // Real Valuer-General named-suburb medians — served for ANY VIC suburb by name,
+  // independent of whether it exact-matches a scored SA2 row.
+  var names=Object.keys(VGMED).filter(function(n){{return n.toLowerCase().indexOf(q)>=0;}}).slice(0,8);
+  if(!names.length) return '';
+  return '<div class="lucard vgcard"><h4>📗 Real sold medians · Valuer-General Victoria</h4><div class="lugrid">'+
+    names.map(function(n){{var v=VGMED[n];
+      return '<div style="grid-column:1/-1"><b>'+n+'</b> — '+
+        (v[0]?'house <b>$'+v[0].toLocaleString()+'</b> <span class="sub2">('+(VG_ASOF.h||'')+')</span>':'')+
+        (v[0]&&v[1]?' · ':'')+
+        (v[1]?'unit <b>$'+v[1].toLocaleString()+'</b> <span class="sub2">('+(VG_ASOF.u||'')+')</span>':'')+'</div>';
+    }}).join('')+'</div><div class="panel-note" style="margin-top:6px">Actual sold medians for the named suburb (not the wider ABS area). VIC only for now; NSW next.</div></div>';
+}}
 function doLookup(q){{
   var box=document.getElementById('lookupResults');
   q=(q||'').trim().toLowerCase();
   if(q.length<2){{box.innerHTML='';return;}}
+  var vg=vgSearch(q);
   var hits=LOOKUP.filter(function(s){{return s.n.toLowerCase().indexOf(q)>=0;}}).slice(0,25);
-  if(!hits.length){{box.innerHTML='<div class="panel-note">No suburb matches "'+q+'".</div>';return;}}
-  box.innerHTML=hits.map(function(s){{
+  if(!hits.length){{box.innerHTML=vg||('<div class="panel-note">No suburb matches "'+q+'".</div>');return;}}
+  box.innerHTML=vg+hits.map(function(s){{
     var g = s.gf==='Gentrifying' ? ('▲ Gentrifying'+(s.ic?' ✓ (income confirming)':'')) : (s.gf==='Trap'?'▼ Trap':'');
     return '<div class="lucard"><h4>'+(s.hs?'🔥 ':'')+s.n+' <span style="color:var(--muted);font-weight:600">· '+s.st+'</span></h4>'+
       '<div class="lugrid">'+
       (s.lv?'<div style="grid-column:1/-1"><span>🟢 Live Domain median (asking):</span> <b>$'+s.lv.toLocaleString()+'</b></div>':'')+
       fmtAsset('House (ABS est)', s.h)+fmtAsset('Townhouse/villa', s.t)+
+      ((s.vm||s.vu)?'<div style="grid-column:1/-1" class="vgline"><span>📗 Real sold median (VG):</span> '+
+        (s.vm?'house <b>$'+s.vm.toLocaleString()+'</b> <span class="sub2">('+(VG_ASOF.h||'')+')</span>':'')+
+        (s.vm&&s.vu?' · ':'')+
+        (s.vu?'unit <b>$'+s.vu.toLocaleString()+'</b> <span class="sub2">('+(VG_ASOF.u||'')+')</span>':'')+'</div>':'')+
       '<div style="grid-column:1/-1"><span>Housing mix:</span> '+(s.dh!=null?
         s.dh+'% house · '+s.dt+'% townhouse · '+s.df+'% flat'+
         (s.dh<60?' <span class="sub2">(flat-heavy — the house median rests on a thin sample)</span>':''):'—')+'</div>'+
@@ -1094,6 +1124,8 @@ function cmpYld(a){{ return a? (a[5]!=null?a[5]:a[4]) : null; }}
 var CMP_ROWS=[
   {{l:'State', g:function(s){{return s.st;}}}},
   {{l:'House price (est)', g:function(s){{return s.h?s.h[0]:null;}}, f:function(v){{return v==null?'—':'$'+v.toLocaleString();}}}},
+  {{l:'📗 Real sold median · house (VG)', g:function(s){{return s.vm||null;}}, f:function(v){{return v==null?'—':'$'+v.toLocaleString();}}}},
+  {{l:'📗 Real sold median · unit (VG)', g:function(s){{return s.vu||null;}}, f:function(v){{return v==null?'—':'$'+v.toLocaleString();}}}},
   {{l:'House gross yield', dir:'high', g:function(s){{return cmpYld(s.h);}}, f:function(v){{return v==null?'—':v.toFixed(1)+'%';}}}},
   {{l:'House cycle', g:function(s){{return s.h?s.h[3]:'—';}}}},
   {{l:'House score /100', dir:'high', g:function(s){{return s.h?s.h[1]:null;}}}},
