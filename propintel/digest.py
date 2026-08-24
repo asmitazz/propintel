@@ -11,6 +11,7 @@ rankings are unchanged without checking.
 from __future__ import annotations
 
 import json
+import re
 from datetime import date, datetime
 
 from .config import ROOT
@@ -167,19 +168,76 @@ def _catalyst_freshness() -> str:
     return ""
 
 
+# Theme buckets in priority order (most likely to move property fundamentals first).
+_NEWS_THEMES = [
+    ("💰 Funding", re.compile(r"(\bbillion\b|\bmillion\b|\$[0-9]|\bfund|\bgrant|\bbudget\b|\binvest|\bfinanc)", re.I)),
+    ("🏗 Infrastructure", re.compile(r"\b(rail|metro|highway|motorway|road|airport|seaport|port|hospital|precinct|tunnel|construction|upgrade|interchange|bridge|station)\b", re.I)),
+    ("🏛 Policy/planning", re.compile(r"\b(rezon\w*|planning|stamp duty|first[- ]home|interest rate|housing target|land release|dwelling|zoning|approval|reform)\b", re.I)),
+    ("👷 Jobs/industry", re.compile(r"\b(jobs|employ\w*|defence|aukus|hydrogen|renewable|solar|wind|battery|energy|manufactur\w*|universit\w*|campus|mine|mining|gigafactory)\b", re.I)),
+    ("🏠 Housing market", re.compile(r"\b(price|prices|rent|rents|vacanc\w*|median|auction|property|sales|listings)\b", re.I)),
+]
+
+
+def _classify_news(it: dict):
+    text = f"{it.get('title','')} {it.get('desc','')}"
+    for i, (label, rx) in enumerate(_NEWS_THEMES):
+        if rx.search(text):
+            return i, label
+    return len(_NEWS_THEMES), "📰 General"
+
+
 def _news_line() -> str:
-    """Report how many relevant news items Sersi pulled today."""
+    """Surface the notable NEW headlines (not just a count) so the reader knows what to
+    actually track — tagged by theme and state, top items that move fundamentals first."""
     p = ROOT / "data" / "news_feed.json"
     if not p.exists():
         return ""
     try:
-        d = json.loads(p.read_text())
-        n = d.get("new_today", 0)
-        if n:
-            return f"\n\n📰 **{n} new property/infrastructure headlines** pulled today — see the News tab."
+        items = json.loads(p.read_text()).get("items", [])
+        seens = [it.get("first_seen") for it in items if it.get("first_seen")]
+        if not seens:
+            return ""
+        newest = max(seens)                                  # today's batch (TZ-independent)
+        fresh = [it for it in items if it.get("first_seen") == newest]
+        if not fresh:
+            return ""
+
+        def esc(s: str) -> str:
+            return (s or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("*", "").replace("_", "")
+
+        ranked = []
+        for it in fresh:
+            ti, label = _classify_news(it)
+            has_geo = 0 if it.get("tags") else 1             # geo-tagged items rank first
+            ranked.append((ti, has_geo, label, it))
+        ranked.sort(key=lambda x: (x[0], x[1]))
+
+        # Diversify: lead with the top item from each theme so the reader sees the full
+        # spread (funding / infrastructure / policy / jobs / market), not 5 of one bucket.
+        by_theme: dict[int, list] = {}
+        for ti, _hg, label, it in ranked:
+            by_theme.setdefault(ti, []).append((label, it))
+        picked, seen = [], set()
+        for ti in sorted(by_theme):
+            label, it = by_theme[ti][0]
+            picked.append((label, it)); seen.add(id(it))
+        for ti, _hg, label, it in ranked:                    # fill spare slots by priority
+            if len(picked) >= 5:
+                break
+            if id(it) not in seen:
+                picked.append((label, it)); seen.add(id(it))
+        picked = picked[:5]
+
+        lines = [f"\n\n📰 **What's new to check** — {len(fresh)} headline(s) today; "
+                 f"the ones most likely to move fundamentals:"]
+        for label, it in picked:
+            geo = ", ".join(it.get("tags") or []) or "National"
+            title = esc((it.get("title") or "").strip())[:110]
+            lines.append(f"- {label} · **{geo}** — {title} _({esc(it.get('source',''))})_")
+        lines.append("Open the **News** tab for the rest and the source links.")
+        return "\n".join(lines)
     except Exception:
-        pass
-    return ""
+        return ""
 
 
 def _write(today: str, body: str) -> str:
