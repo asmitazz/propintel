@@ -767,6 +767,9 @@ def _lookup_data(recs: list[dict], live: dict) -> str:
             "od": r.get("owner_occupier_delta"),    # change in that share 2016->2021 (traction)
             "om": r.get("owned_mortgage_pct"),      # owned-with-mortgage % (recent OO buyers)
             "dh": r.get("pct_house"), "dt": r.get("pct_townhouse"), "df": r.get("pct_flat"),
+            # .id council-area population forecast (display-only, partial coverage)
+            "idc": r.get("id_council"), "idb": r.get("id_pop_base"), "idby": r.get("id_year_base"),
+            "idf": r.get("id_pop_fc"), "idfy": r.get("id_year_fc"), "idg": r.get("id_growth_pct"),
         })
     return json.dumps(out, separators=(",", ":"))
 
@@ -1168,9 +1171,14 @@ function doLookup(q){{
       '<div style="grid-column:1/-1;margin-top:4px"><span>🧑‍💼 Selling agents:</span> '+
         '<a target="_blank" rel="noopener" href="'+raLink(s)+'">Top-selling agents · RateMyAgent →</a>'+
         '<span class="sub2"> — ranks agents by sales volume in this suburb and shows each agent\\'s median sale price, so you can see who sells the most and who transacts at cheaper price points.</span></div>'+
-      '<div style="grid-column:1/-1;margin-top:4px"><span>📊 Area profile:</span> '+
+      (s.idg!=null?'<div style="grid-column:1/-1;margin-top:4px"><span>📊 Council-area forecast (.id):</span> '+
+        '<b>'+s.idc+'</b> — '+s.idb.toLocaleString()+' ('+s.idby+') → <b>'+s.idf.toLocaleString()+'</b> ('+s.idfy+') people, '+
+        '<b class="'+(s.idg>0?'hit':'warn-flag')+'">'+(s.idg>0?'+':'')+s.idg+'%</b>'+
+        '<span class="sub2"> — .id (informed decisions) population forecast for the whole council this suburb sits in. </span>'+
+        '<a target="_blank" rel="noopener" href="'+idLink(s)+'">full .id profile →</a></div>'
+      :'<div style="grid-column:1/-1;margin-top:4px"><span>📊 Area profile:</span> '+
         '<a target="_blank" rel="noopener" href="'+idLink(s)+'">Demographics &amp; population forecast · .id →</a>'+
-        '<span class="sub2"> — .id (informed decisions) publishes free council-level community &amp; economic profiles plus small-area population/dwelling forecasts; coverage depends on whether the council subscribes.</span></div>'+
+        '<span class="sub2"> — free council-level community &amp; economic profiles + small-area forecasts from .id (informed decisions); this suburb\\'s council isn\\'t in .id\\'s free forecast set, so the link searches their site.</span></div>')+
       '</div></div>';
   }}).join('');
 }}

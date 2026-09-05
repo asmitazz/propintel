@@ -22,7 +22,7 @@ from __future__ import annotations
 import json
 import math
 
-from . import abs_client, abs_geo, abs_region, cotality, vg_prices
+from . import abs_client, abs_geo, abs_region, cotality, id_forecast, vg_prices
 from .config import ROOT
 from .db import connect, finish_run, now_iso, start_run, state_from_sa2
 
@@ -527,6 +527,23 @@ def build_analysis() -> dict:
 
         _attach_vg("VIC", vg_vic, "Valuer-General Victoria", _set_vic)
         _attach_vg("NSW", vg_nsw, "Valuer-General NSW", _set_nsw)
+
+        # .id council population forecasts (display-only, partial coverage). Read from the
+        # committed caches — no network here — and attach to each suburb via its LGA.
+        try:
+            sa2_lga, id_fc = id_forecast.load_join()
+            n_id = 0
+            for r in records:
+                rec = id_forecast.forecast_for(str(r["code"]), sa2_lga, id_fc)
+                if rec:
+                    r["id_council"] = rec["council"]
+                    r["id_pop_base"], r["id_year_base"] = rec["base_pop"], rec["base_year"]
+                    r["id_pop_fc"], r["id_year_fc"] = rec["fc_pop"], rec["fc_year"]
+                    r["id_growth_pct"] = rec["growth_pct"]
+                    n_id += 1
+            print(f"[analyze] .id council forecast attached to {n_id}/{len(records)} suburbs")
+        except Exception as e:
+            print(f"[analyze] .id forecast join skipped: {str(e)[:80]}")
 
         ruled_out.sort(key=lambda r: max(r.get("suburb_influx_pct") or 0, r.get("catchment_influx_pct") or 0), reverse=True)
         OUTPUT.write_text(json.dumps({
