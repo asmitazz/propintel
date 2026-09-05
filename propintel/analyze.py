@@ -22,7 +22,7 @@ from __future__ import annotations
 import json
 import math
 
-from . import abs_client, abs_geo, abs_region, vg_prices
+from . import abs_client, abs_geo, abs_region, cotality, vg_prices
 from .config import ROOT
 from .db import connect, finish_run, now_iso, start_run, state_from_sa2
 
@@ -319,6 +319,12 @@ def build_analysis() -> dict:
                 vg_nsw = {}
         else:
             vg_vic, vg_nsw = {}, {}
+        # Cotality (CoreLogic) Home Value Index — free capital-city growth rates (%, not $).
+        # Display-only macro context (never scored), so it's always pulled — it's one small JSON.
+        try:
+            cotality_hvi = cotality.pull_hvi()
+        except Exception:
+            cotality_hvi = {}
 
         # 5km supply-influx catchment (committed building approvals ÷ dwelling stock)
         centroids = abs_geo.fetch_sa2_centroids()
@@ -531,6 +537,7 @@ def build_analysis() -> dict:
             "trends": trends,
             "projections": projections,
             "vg_medians": {"VIC": vg_vic, "NSW": vg_nsw},   # real named-suburb medians (lookup layer)
+            "cotality": cotality_hvi,                       # capital-city HVI growth rates (display-only)
             "suburbs": records,
         }, indent=1))
         finish_run(conn, run_id, len(records), 0, "ok",

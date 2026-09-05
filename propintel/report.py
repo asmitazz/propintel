@@ -259,6 +259,47 @@ def _hbar(title, pairs, unit="", subtitle=""):
             f'<line x1="{zero:.0f}" y1="0" x2="{zero:.0f}" y2="{H-10}" stroke="var(--line)"/>{rows}</svg></div>')
 
 
+def _cotality_section(hvi: dict) -> str:
+    """Capital-city market pulse from the Cotality (CoreLogic) Home Value Index — growth
+    rates only (%, never dollars), display-only macro context. Empty on missing data."""
+    if not hvi or not hvi.get("cities"):
+        return ""
+
+    def pc(v):
+        if v is None:
+            return '<span class="sub2">—</span>'
+        col = "var(--good)" if v > 0 else ("var(--bad)" if v < 0 else "var(--muted)")
+        return f'<span style="color:{col};font-weight:600">{"+" if v > 0 else ""}{v:.1f}%</span>'
+
+    def row(c, top=False):
+        style = ' style="border-top:2px solid var(--line2)"' if top else ""
+        return (f'<tr{style}><td><b>{c["name"]}</b></td>'
+                f'<td class="num">{pc(c.get("all_mo"))}</td>'
+                f'<td class="num">{pc(c.get("all_yr"))}</td>'
+                f'<td class="num">{pc(c.get("house_yr"))}</td>'
+                f'<td class="num">{pc(c.get("unit_yr"))}</td></tr>')
+
+    body = "".join(row(c) for c in hvi["cities"])
+    if hvi.get("aggregate"):
+        body += row(hvi["aggregate"], top=True)
+    asof = hvi.get("asof", "")
+    src, url = hvi.get("source", "Cotality Home Value Index"), hvi.get("url", "")
+    return f'''<h2>Capital-city market pulse</h2>
+    <p class="sub">Dwelling-value <b>growth rates</b> (not prices) from the <b>{src}</b> — the most-watched read on
+    how each capital's market is actually moving right now, and the macro backdrop to the suburb fundamentals below.
+    Green = rising, red = falling. As at <b>{asof}</b>.</p>
+    <div class="tablewrap"><table style="min-width:560px">
+      <thead><tr><th>Capital city</th><th class="num" title="Change over the latest month">1 month</th>
+        <th class="num" title="Change over the last 12 months">1 year</th>
+        <th class="num" title="Houses, 12-month change">House 1yr</th>
+        <th class="num" title="Units/apartments, 12-month change">Unit 1yr</th></tr></thead>
+      <tbody>{body}</tbody></table></div>
+    <p class="panel-note" style="margin-top:8px">Source: <a href="{url}" target="_blank" rel="noopener">{src}</a>.
+    Capital-city dwelling-value index, shown as % change (no dollar figures). Rest-of-state and suburb-level
+    detail sit behind Cotality's paid products — this is the free public index.</p>
+    '''
+
+
 def _trends_section(trends: dict) -> str:
     states = trends["states"]
     cities = trends["cities"]
@@ -762,7 +803,7 @@ def build():
         economy=_economy_section(recs), news=_live_news_section() + _news_growth_section(recs),
         scenario=_scenario_section(recs), framework=_framework_note(),
         policy=_policy_section(), catalyst=_catalyst_section(), context=_context_section(),
-        trends=_trends_section(data.get("trends", {"states": [], "cities": []})),
+        trends=_cotality_section(data.get("cotality", {})) + _trends_section(data.get("trends", {"states": [], "cities": []})),
         outlook=_outlook_section(data.get("projections", {}), data.get("trends", {"states": []})),
         summary=_summary_section(recs, data.get("trends", {"states": []}), data.get("projections", {})),
         lookupdata=_lookup_data(recs, live),
