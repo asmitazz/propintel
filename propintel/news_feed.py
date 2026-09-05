@@ -42,6 +42,23 @@ RELEVANCE = re.compile(
     r"project|jobs|employ|migrat|population|suburb|property|price|rent|vacanc|development|stamp duty|"
     r"first home|interest rate|construction)\b", re.I)
 
+# PM & Cabinet and Treasury are all-of-government feeds — they carry sport, foreign
+# affairs, ceremonies and arts alongside the occasional real housing/infra announcement.
+# RELEVANCE alone lets the junk through (a Pacific-sport presser that says "funding" and
+# "jobs"), so items from these BROAD feeds must additionally clear a domestic-property gate:
+# a concrete property/infrastructure term, OR an Australian location + a relevance hit.
+_BROAD_FEEDS = {"PM & Cabinet", "Treasury"}
+_NAV_TITLES = {"home", "news", "media", "media releases", "media centre", "media center",
+               "latest news", "newsroom", "media release", "press releases", "speeches"}
+_STRICT = re.compile(
+    r"\b(housing|dwelling\w*|homes?|new homes|home build\w*|social housing|public housing|"
+    r"build[- ]to[- ]rent|rezon\w*|planning reform|land release|stamp duty|first[- ]home|"
+    r"dwelling approvals?|building approvals?|subdivision|greenfield|"
+    r"rail line|light rail|metro|motorway|freeway|highway|hospital|airport|seaport|precinct|"
+    r"desalinat\w*|renewable energy zone|\bREZ\b|hydrogen (hub|plant|precinct)|pumped hydro|"
+    r"defence precinct|road upgrade|interchange|infrastructure (pipeline|investment|fund|package|project|program)|"
+    r"construction (sector|industry|pipeline)|property market|rental market|median (house|price))\b", re.I)
+
 # Low-signal items to drop even if they mention a relevant keyword — pure transcripts,
 # press conferences, interviews and photo-ops carry no fundamentals signal to track.
 NOISE = re.compile(
@@ -104,6 +121,26 @@ def _geo_tags(text: str) -> list[str]:
     return [st for st, rx in _STATE_RE.items() if rx.search(text)]
 
 
+def _keep(source: str, title: str, desc: str) -> bool:
+    """Decide whether a feed item is genuinely property/infrastructure-relevant.
+
+    Broad all-of-government feeds (PM & Cabinet, Treasury) carry sport / foreign
+    affairs / ceremonies that trip the loose RELEVANCE keywords, so they must clear a
+    stricter gate: a concrete domestic property/infra term, OR an Australian location
+    plus a relevance hit (which catches funding announcements like the Hunter's future)."""
+    t = (title or "").strip()
+    if len(t) < 12 or t.lower() in _NAV_TITLES:   # feed nav artifacts: "Home", "Media", "News"
+        return False
+    if NOISE.search(title):                       # transcripts / pressers / remarks / photo-ops
+        return False
+    if source in _BROAD_FEEDS:
+        # Judge broad government feeds on the TITLE only — their press-release descriptions
+        # are boilerplate ("the Government is investing … in <state> … homes …") that trips
+        # the loose keywords on almost anything. The title states the actual subject.
+        return bool(_STRICT.search(title) or (_geo_tags(title) and RELEVANCE.search(title)))
+    return bool(RELEVANCE.search(f"{title} {desc}"))
+
+
 def fetch_all() -> dict:
     """Pull all feeds, filter + geo-tag, merge with existing (dedupe), keep newest."""
     prev = {}
@@ -121,22 +158,21 @@ def fetch_all() -> dict:
             if r.status_code != 200:
                 continue
             for item in _parse_feed(source, r.text):
-                text = f'{item["title"]} {item["desc"]}'
-                if not RELEVANCE.search(text):
-                    continue
-                if NOISE.search(item["title"]):        # drop transcripts / pressers / photo-ops
+                if not _keep(source, item["title"], item["desc"]):
                     continue
                 if item["link"] in seen:
                     continue
-                item["tags"] = _geo_tags(text)
+                item["tags"] = _geo_tags(f'{item["title"]} {item["desc"]}')
                 item["first_seen"] = today
                 seen[item["link"]] = item
                 new_count += 1
         except Exception:
             continue
 
-    # also drop any noise items already stored from before this filter existed
-    kept = [i for i in seen.values() if not NOISE.search(i.get("title", ""))]
+    # re-apply the gate to anything stored before this filter existed (purges old noise,
+    # e.g. PM & Cabinet foreign-affairs/sport items that predate the broad-feed gate)
+    kept = [i for i in seen.values()
+            if _keep(i.get("source", ""), i.get("title", ""), i.get("desc", ""))]
     items = sorted(kept, key=lambda i: i.get("first_seen", ""), reverse=True)[:MAX_ITEMS]
     NEWS_FILE.write_text(json.dumps({"generated": today, "new_today": new_count, "items": items}, indent=1))
     return {"new_today": new_count, "total": len(items)}
