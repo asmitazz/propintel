@@ -1106,6 +1106,11 @@ function gsearch(s, terms){{ return 'https://www.google.com/search?q='+encodeURI
 // Their page needs a postcode we don't hold, so we deep-link via a site-scoped search that
 // lands on the suburb's agent ranking. Free, no scraping.
 function raLink(s){{ var nm=coreName(s.n).replace(/\\s*\\([^)]*\\)/g,'').trim(); return 'https://www.google.com/search?q='+encodeURIComponent('site:ratemyagent.com.au '+nm+' '+s.st+' agents'); }}
+// .id (informed decisions) — free council-level community/economic profiles + small-area
+// population & dwelling forecasts. profile.id/economy.id are JS apps and forecast.id is
+// council-level (subscribing councils only), so — like the agent/hazard links — we deep-link
+// via a scoped search that lands on the relevant .id profile rather than pulling numbers.
+function idLink(s){{ var nm=coreName(s.n).replace(/\\s*\\([^)]*\\)/g,'').trim(); return 'https://www.google.com/search?q='+encodeURIComponent('site:id.com.au '+nm+' '+s.st+' community profile'); }}
 // State-correct hazard / amenity viewers. Exposure is parcel-level (8 different state
 // schemas), so we can't auto-flag at suburb level on free data — these open the
 // authoritative map where you check the exact address. f=flood, b=bushfire, n=aircraft
@@ -1163,6 +1168,9 @@ function doLookup(q){{
       '<div style="grid-column:1/-1;margin-top:4px"><span>🧑‍💼 Selling agents:</span> '+
         '<a target="_blank" rel="noopener" href="'+raLink(s)+'">Top-selling agents · RateMyAgent →</a>'+
         '<span class="sub2"> — ranks agents by sales volume in this suburb and shows each agent\\'s median sale price, so you can see who sells the most and who transacts at cheaper price points.</span></div>'+
+      '<div style="grid-column:1/-1;margin-top:4px"><span>📊 Area profile:</span> '+
+        '<a target="_blank" rel="noopener" href="'+idLink(s)+'">Demographics &amp; population forecast · .id →</a>'+
+        '<span class="sub2"> — .id (informed decisions) publishes free council-level community &amp; economic profiles plus small-area population/dwelling forecasts; coverage depends on whether the council subscribes.</span></div>'+
       '</div></div>';
   }}).join('');
 }}
