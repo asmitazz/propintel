@@ -34,9 +34,9 @@ POLICIES = ROOT / "data" / "policies.json"
 CATALYSTS = ROOT / "data" / "catalysts.json"
 
 ASSETS = [("house", "🏠 Houses"), ("townhouse", "🏘 Townhouses & Villas")]
-BANDS = [("overview", "★ Top overall"), ("under-400k", "Under $400k"),
-         ("400-500k", "$400–500k"), ("500-600k", "$500–600k"),
-         ("600-800k", "$600–800k"), ("800k-1M", "$800k–1M")]
+# The shortlist is organised by state (not price band) — the site leads with growth
+# fundamentals and shows no dollar figures, so price bands no longer make sense.
+STATE_ORDER = ["NSW", "VIC", "QLD", "WA", "SA", "TAS", "ACT", "NT"]
 CYCLE_CLASS = {"Early": "b-early", "Mid": "b-mid", "Late": "b-late", "Flat": "b-flat", "Unknown": "b-flat"}
 RISK_CLASS = {"Diversified": "b-early", "Elevated": "b-mid", "High": "b-late"}
 STATUS_CLASS = {"Active": "b-early", "Under construction": "b-early", "Announced": "b-early",
@@ -49,21 +49,11 @@ def _status_badge(status: str) -> str:
 
 
 def _yield_cell(a: dict) -> str:
-    mkt = a["market_yield"]
-    cls = "hit" if mkt >= 4.5 else ""
-    return f'<span class="{cls}">{a["gross_yield"]:.1f}%<span class="sub2"> · ~{mkt:.1f}% mkt</span></span>'
-
-
-def _price_cell(a: dict) -> str:
-    return f'≈${a["price_now"]:,}<span class="sub2"> · ’{str(a["price_year"])[-2:]} ${a["price_2024"]:,}</span>'
-
-
-def _ratio_cell(s: dict) -> str:
-    r = s.get("house_unit_ratio")
-    if r is None:
-        return '<span class="sub2">—</span>'
-    cls = "hit" if r >= 1.6 else ("warn-flag" if r < 0.85 else "")
-    return f'<span class="{cls}">{r:.2f}×</span>'
+    # Rental yield is still one of the scoring inputs, but the site shows no dollar figures,
+    # so the actual % is hidden — we only surface whether the suburb clears the ~4.5% gate.
+    if a["market_yield"] >= 4.5:
+        return '<span class="hit" title="Clears the ~4.5%+ market rental-yield gate">✓</span>'
+    return '<span class="sub2" title="Below the ~4.5% market rental-yield gate">—</span>'
 
 
 def _top3_str(s: dict) -> str:
@@ -125,8 +115,6 @@ def _row(s: dict, asset: str) -> str:
       <td class="num">{a["rank"]}</td>
       <td><b>{s["name"]}</b>{' <span title="Hotspot watch — before-the-crowd profile">🔥</span>' if s.get("hotspot") else ''}</td>
       <td>{s["state"]}</td>
-      <td class="num">{_price_cell(a)}</td>
-      <td class="num">{_ratio_cell(s)}</td>
       <td class="num">{_yield_cell(a)}</td>
       <td class="num">{_ripple_cell(s)}</td>
       <td class="num">{g(s["pop_growth_pa"])}</td>
@@ -139,11 +127,11 @@ def _row(s: dict, asset: str) -> str:
     </tr>'''
 
 
-def _table(rows_html: str, asset_label: str) -> str:
+def _table(rows_html: str) -> str:
     return f'''<div class="tablewrap"><table>
       <thead><tr>
-        <th class="num">#</th><th>Suburb (SA2)</th><th>St</th><th class="num">{asset_label} (est. now)</th>
-        <th class="num" title="House ÷ unit price (2024)">H:U var</th><th class="num" title="Gross yield = annual rent ÷ price. ·mkt applies a +1.4pp Census-rent→market-asking adjustment.">Gross yld ·mkt</th>
+        <th class="num">#</th><th>Suburb (SA2)</th><th>St</th>
+        <th class="num" title="✓ = clears the ~4.5%+ market rental-yield gate (the yield % is a scoring input but not shown — this is a fundamentals-only view)">Yield</th>
         <th class="num" title="% below similar-income neighbours within 10km (ripple/arbitrage upside)">Ripple</th><th class="num">Pop g/yr</th><th class="num">Net mig /1k</th>
         <th class="num" title="Dwelling-approval influx within 5km as % of stock (rule-out >8%)">Supply 5km</th>
         <th class="num" title="Socio-economic decile (1=most disadvantaged). ▲ gentrifying · ▼ trap">SES</th>
@@ -154,27 +142,29 @@ def _table(rows_html: str, asset_label: str) -> str:
 def _strategy_block(records: list[dict], asset: str, label: str, active: bool) -> str:
     elig = [r for r in records if r.get(asset)]
     elig.sort(key=lambda r: r[asset]["rank"])
-    asset_label = "Median house" if asset == "house" else "Median townhouse/unit"
     n_meet = len([r for r in elig if r[asset]["market_yield"] >= 4.5])
+    noun = label.split(" ", 1)[1].lower()   # "houses" / "townhouses & villas"
 
-    # band nav
+    # Tabs: a national "Top overall" plus one per state present in the data.
+    states = [st for st in STATE_ORDER if any(r["state"] == st for r in elig)]
+    tabs = [("overview", "★ Top overall")] + [(st, st) for st in states]
     btns = "".join(
-        f'<button class="tabbtn{" active" if b==BANDS[0][0] else ""}" onclick="showBand(\'{asset}\',\'{b}\')" data-band="{asset}-{b}">{lbl}</button>'
-        for b, lbl in BANDS
+        f'<button class="tabbtn{" active" if key=="overview" else ""}" onclick="showBand(\'{asset}\',\'{key}\')" data-band="{asset}-{key}">{lbl}</button>'
+        for key, lbl in tabs
     )
-    # panels
     panels = []
-    for b, _lbl in BANDS:
-        if b == "overview":
+    for key, lbl in tabs:
+        if key == "overview":
             rows = elig[:15]
-            note = (f'Top 15 {label.split(" ",1)[1].lower()} nationwide by composite score (any price). '
-                    f'{len(elig)} suburbs have a {asset} market; {n_meet} meet the ~4.5%+ market-yield target.')
+            note = (f'Top 15 {noun} nationwide, ranked purely on the growth fundamentals (no price used in the display). '
+                    f'{len(elig)} suburbs have a {asset} market; {n_meet} clear the ~4.5%+ rental-yield gate.')
         else:
-            rows = [r for r in elig if r[asset]["band"] == b][:15]
-            note = f'Top {len(rows)} suburbs with an estimated {asset} median in this band, by composite score.'
+            in_state = [r for r in elig if r["state"] == key]
+            rows = in_state[:15]
+            note = f'Top {len(rows)} {noun} in {lbl} by growth-fundamentals score ({len(in_state)} scored).'
         panels.append(
-            f'<section class="tabpanel{" active" if b=="overview" else ""}" id="panel-{asset}-{b}">'
-            f'<div class="panel-note">{note}</div>{_table("".join(_row(r, asset) for r in rows), asset_label)}</section>'
+            f'<section class="tabpanel{" active" if key=="overview" else ""}" id="panel-{asset}-{key}">'
+            f'<div class="panel-note">{note}</div>{_table("".join(_row(r, asset) for r in rows))}</section>'
         )
     return (f'<div class="strat{" active" if active else ""}" id="strat-{asset}">'
             f'<div class="tabs">{btns}</div>{"".join(panels)}</div>')
@@ -192,7 +182,6 @@ def _scenario_section(recs: list[dict]) -> str:
     rip.sort(key=lambda x: -(x[0]["ripple_gap"] or 0))
     rows = "".join(
         f'<tr><td><b>{s["name"]}</b></td><td>{s["state"]}</td>'
-        f'<td class="num">${a["price_now"]:,}</td>'
         f'<td class="num"><span class="hit">+{s["ripple_gap"]:.0f}%</span></td>'
         f'<td>{s.get("econ_base","")}</td>'
         f'<td>{"▲ Gentrifying" if s.get("gentrify_flag")=="Gentrifying" else ""}</td></tr>'
@@ -204,9 +193,9 @@ def _scenario_section(recs: list[dict]) -> str:
       <p class="m-detail"><b>The domino chain (how a government catalyst becomes price growth):</b></p>
       <p class="m-detail" style="margin-top:6px">① <b>Funded infrastructure / jobs</b> (e.g. AUKUS at Osborne, Olympics transport in SEQ, Hunter energy transition) → ② <b>employment</b> rises and non-local workers arrive → ③ <b>net migration &amp; population</b> climb (demand) → ④ if <b>supply is constrained</b> (approvals &lt;8% / 5km) demand outstrips it → ⑤ <b>prices &amp; rents</b> rise in the core suburbs → ⑥ buyers priced out spill into <b>cheaper adjacent suburbs of similar income</b> → the <b>ripple</b> lifts those next.</p>
       <p class="m-detail" style="margin-top:10px"><b>Why the ripple column matters:</b> a suburb priced well below its similar-income neighbours (within 10km) is the arbitrage — as the dearer neighbours become unaffordable, demand ripples to it and the gap closes. Combined with a <b>diversifying, anchor-led economy</b> and <b>low socio-economic base that's rising</b>, that's the highest-conviction forward setup.</p>
-      <p class="m-detail" style="margin-top:10px"><b>Top ripple / arbitrage candidates under $1M</b> (priced below similar-income neighbours):</p>
-      <div class="tablewrap" style="margin-top:8px"><table style="min-width:640px">
-        <thead><tr><th>Suburb</th><th>St</th><th class="num">Price (est)</th><th class="num">Below peers</th><th>Economic base</th><th>Trajectory</th></tr></thead>
+      <p class="m-detail" style="margin-top:10px"><b>Top ripple / arbitrage candidates</b> (priced below similar-income neighbours within 10km):</p>
+      <div class="tablewrap" style="margin-top:8px"><table style="min-width:520px">
+        <thead><tr><th>Suburb</th><th>St</th><th class="num">Below peers</th><th>Economic base</th><th>Trajectory</th></tr></thead>
         <tbody>{rows}</tbody></table></div>
       <p class="m-detail" style="margin-top:10px"><b>Economic diversification as a driver (beyond migration):</b> an area's <i>potential</i> depends on <i>what</i> drives its jobs. <b>Anchor-led</b> economies (health, education, defence/public admin, professional, finance) provide stable, growing demand that compounds; <b>commodity-exposed</b> economies (mining/agriculture) carry boom-bust risk. The <b>Econ base</b> column shows each suburb's mix — hover for the top-3 industries. A diversifying, anchor-led base is a long-term (6–15yr) growth factor that migration alone doesn't capture.</p>
     </div>'''
@@ -351,8 +340,7 @@ def _summary_section(recs: list[dict], trends: dict, proj: dict) -> str:
             if r.get("gentrify_flag") == "Gentrifying": tags.append('▲gentrifying' + ('✓' if r.get("income_confirmed") else ''))
             if (r.get("ripple_gap") or 0) >= 15: tags.append(f'ripple+{r["ripple_gap"]:.0f}%')
             out += (f'<tr><td><b>{r["name"]}</b> {" ".join(tags)}</td><td>{r["state"]}</td>'
-                    f'<td class="num">≈${a["price_now"]:,}</td>'
-                    f'<td class="num">{a["gross_yield"]:.1f}%</td>'
+                    f'<td class="num">{_yield_cell(a)}</td>'
                     f'<td class="num">{r.get("proj_pop_growth_10yr","—")}%</td>'
                     f'<td><span class="badge {CYCLE_CLASS.get(a["cycle"],"b-flat")}">{a["cycle"]}</span></td>'
                     f'<td class="num"><b>{a["score"]}</b></td></tr>')
@@ -371,11 +359,11 @@ def _summary_section(recs: list[dict], trends: dict, proj: dict) -> str:
       <div class="stat"><div class="v">+{nat/1e6:.2f}M</div><div class="l">people by {end} · {jump("outlook","Outlook")}</div></div>
     </div>
 
-    <h3 class="ph">Top houses under $1M {jump("shortlist","full list")}</h3>
-    <div class="tablewrap"><table style="min-width:720px"><thead><tr><th>Suburb</th><th>St</th><th class="num">Price (est)</th><th class="num">Gross yld</th><th class="num">Proj 10yr</th><th>Cycle</th><th class="num">Score</th></tr></thead><tbody>{pick_rows(th,"house")}</tbody></table></div>
+    <h3 class="ph">Top houses {jump("shortlist","full list")}</h3>
+    <div class="tablewrap"><table style="min-width:560px"><thead><tr><th>Suburb</th><th>St</th><th class="num" title="✓ = clears the ~4.5%+ market rental-yield gate">Yield</th><th class="num">Proj 10yr</th><th>Cycle</th><th class="num">Score</th></tr></thead><tbody>{pick_rows(th,"house")}</tbody></table></div>
 
-    <h3 class="ph">Top townhouses / villas under $1M {jump("shortlist","full list")}</h3>
-    <div class="tablewrap"><table style="min-width:720px"><thead><tr><th>Suburb</th><th>St</th><th class="num">Price (est)</th><th class="num">Gross yld</th><th class="num">Proj 10yr</th><th>Cycle</th><th class="num">Score</th></tr></thead><tbody>{pick_rows(tt,"townhouse")}</tbody></table></div>
+    <h3 class="ph">Top townhouses / villas {jump("shortlist","full list")}</h3>
+    <div class="tablewrap"><table style="min-width:560px"><thead><tr><th>Suburb</th><th>St</th><th class="num" title="✓ = clears the ~4.5%+ market rental-yield gate">Yield</th><th class="num">Proj 10yr</th><th>Cycle</th><th class="num">Score</th></tr></thead><tbody>{pick_rows(tt,"townhouse")}</tbody></table></div>
 
     <div class="panel" style="margin-top:16px">
       <p class="m-detail"><b>How Sersi picks these:</b> every Australian suburb (SA2) is scored on the fundamentals that drive capital growth <i>before</i> price moves — yield, gentrification (low socio-economic base rising, confirmed by incomes outpacing the state), ripple/arbitrage vs richer neighbours, migration, affordability, industry diversity and supply scarcity — then oversupplied greenfield estates are ruled out (&gt;8% approvals within 5km). 100% free public data (ABS + valuers-general); no listings, Domain-free.</p>
@@ -501,7 +489,6 @@ def _economy_section(recs: list[dict]) -> str:
 
     rows = "".join(
         f'<tr><td><b>{r["name"]}</b></td><td>{r["state"]}</td>'
-        f'<td class="num">${a["price_now"]:,}</td>'
         f'<td>{_base_badge(r.get("econ_base"))}</td>'
         f'<td class="num">{r.get("effective_industries","")}</td>'
         f'<td style="min-width:230px">{mix_bars(r)}</td>'
@@ -520,9 +507,9 @@ def _economy_section(recs: list[dict]) -> str:
       </div>
       <p class="m-detail" style="margin-top:6px"><i>Diversified economies pull in materially more migration than commodity-dependent ones — the fundamentals stack up before price moves.</i></p>
     </div>
-    <p class="sub" style="margin-top:18px">Most-diversified in-budget suburbs (effective number of industries = how many sectors the economy effectively spreads across):</p>
-    <div class="tablewrap"><table style="min-width:900px">
-      <thead><tr><th>Suburb</th><th>St</th><th class="num">Price (est)</th><th>Economic base</th>
+    <p class="sub" style="margin-top:18px">Most-diversified suburbs (effective number of industries = how many sectors the economy effectively spreads across):</p>
+    <div class="tablewrap"><table style="min-width:820px">
+      <thead><tr><th>Suburb</th><th>St</th><th>Economic base</th>
         <th class="num" title="Inverse-Simpson: effective number of industries">Eff. industries</th>
         <th>Top industries</th><th class="num">Net mig /1k</th><th class="num">Pop g/yr</th></tr></thead>
       <tbody>{rows}</tbody></table></div>'''
@@ -719,8 +706,10 @@ def _load_live_prices() -> dict:
 def _lookup_data(recs: list[dict], live: dict) -> str:
     """Compact JSON of every suburb for the client-side lookup."""
     def asset(a):
-        # [price, score, band, cycle, market_yield, gross_yield]
-        return [a["price_now"], a["score"], a["band"], a["cycle"],
+        # [price(hidden→None), score, band(hidden), cycle, market_yield, gross_yield]
+        # The site shows no dollar figures, so the price is not shipped; yield is kept only
+        # to render the ✓/— rental-yield gate (a scoring input, shown non-numerically).
+        return [None, a["score"], None, a["cycle"],
                 a["market_yield"], a["gross_yield"]] if a else None
     out = []
     for r in recs:
@@ -732,14 +721,11 @@ def _lookup_data(recs: list[dict], live: dict) -> str:
             "hs": 1 if r.get("hotspot") else 0, "eb": r.get("econ_base"),
             "mig": r.get("net_migration_per_1000"), "pg": r.get("pop_growth_pa"),
             "pj": r.get("proj_pop_growth_10yr"), "sup": r.get("catchment_influx_pct"),
-            "lv": live.get(r["code"]),   # live Domain median asking, if refreshed
             "i3": [f"{n} {p}%" for n, p in (r.get("top3_industries") or [])],
             "oo": r.get("owner_occupier_pct"),      # owner-occupier share % (2021)
             "od": r.get("owner_occupier_delta"),    # change in that share 2016->2021 (traction)
             "om": r.get("owned_mortgage_pct"),      # owned-with-mortgage % (recent OO buyers)
             "dh": r.get("pct_house"), "dt": r.get("pct_townhouse"), "df": r.get("pct_flat"),
-            "vm": r.get("vg_median"), "vu": r.get("vg_unit_median"),   # real VG sold medians
-            "va": r.get("vg_asof"), "vua": r.get("vg_unit_asof"),      # their as-of labels
         })
     return json.dumps(out, separators=(",", ":"))
 
@@ -769,18 +755,9 @@ def build():
         sig["s"][r["code"]] = [r["name"], r["state"], h.get("score"), h.get("rank"),
                                t.get("score"), t.get("rank"),
                                1 if r.get("hotspot") else 0, r.get("gentrify_flag") or ""]
-    # Real Valuer-General named-suburb medians for the search layer, as a flat list:
-    # [name, house_median, unit/attached_median, house_asof, unit_asof, state].
-    vgm = data.get("vg_medians") or {}
-    vgmed = []
-    for sub, v in (vgm.get("VIC") or {}).items():
-        vgmed.append([sub, v.get("h"), v.get("u"), v.get("h_asof") or "", v.get("u_asof") or "", "VIC"])
-    for sub, v in (vgm.get("NSW") or {}).items():
-        vgmed.append([sub, v.get("h"), v.get("a"), v.get("asof") or "", v.get("asof") or "", "NSW"])
     html = _PAGE.format(
         cmpdefault=json.dumps(cmp_default),
         sigdata=json.dumps(sig, separators=(",", ":")),
-        vgmed=json.dumps(vgmed, separators=(",", ":")),
         stratnav=strat_nav, stratblocks=strat_blocks,
         economy=_economy_section(recs), news=_live_news_section() + _news_growth_section(recs),
         scenario=_scenario_section(recs), framework=_framework_note(),
@@ -962,15 +939,15 @@ details{{margin-top:10px}} summary{{cursor:pointer;color:var(--accent);font-size
   <div class="page active" id="page-summary">{summary}</div>
 
   <div class="page" id="page-shortlist">
-  <h2>Shortlist by strategy &amp; price band</h2>
-  <p class="sub">Composite score (0–100) per asset = yield 15 · <b>gentrification 12</b> · population growth 12 · net migration 10 · <b>ripple 10</b> · affordability 9 · industry diversity 9 · supply scarcity 8 · runway (not-already-run) 6 · economic health 4 · liquidity 5. <b>Ripple</b> = % below similar-income neighbours within 10km (arbitrage upside). <b>Econ base</b> = industry mix (Anchor / Mixed / Commodity — hover for top-3). <b>SES</b> = socio-economic decile (1 = most disadvantaged): <span class="hit">▲ gentrifying</span> · <span class="warn-flag">▼ trap</span>. <b>Cycle</b>: <span class="badge b-early">Early</span> · <span class="badge b-mid">Mid</span> · <span class="badge b-late">Late</span>. <b>Houses</b> = land play; <b>Townhouses/villas</b> = lower entry, higher yield.</p>
+  <h2>Shortlist by strategy &amp; state</h2>
+  <p class="sub"><b>Growth-fundamentals ranking — no prices shown.</b> Composite score (0–100) per asset = yield 15 · <b>gentrification 12</b> · population growth 12 · net migration 10 · <b>ripple 10</b> · affordability 9 · industry diversity 9 · supply scarcity 8 · runway (not-already-run) 6 · economic health 4 · liquidity 5. Yield and affordability are still scoring inputs, but the site leads purely with fundamentals, so we show the <b>Yield</b> gate as <span class="hit">✓</span> (clears ~4.5%+ market yield) rather than a dollar figure. <b>Ripple</b> = % below similar-income neighbours within 10km (arbitrage upside). <b>Econ base</b> = industry mix (Anchor / Mixed / Commodity — hover for top-3). <b>SES</b> = socio-economic decile (1 = most disadvantaged): <span class="hit">▲ gentrifying</span> · <span class="warn-flag">▼ trap</span>. <b>Cycle</b>: <span class="badge b-early">Early</span> · <span class="badge b-mid">Mid</span> · <span class="badge b-late">Late</span>. <b>Houses</b> = land play; <b>Townhouses/villas</b> = lower entry, higher yield.</p>
   <div class="strat-tabs">{stratnav}</div>
   {stratblocks}
   </div>
 
   <div class="page" id="page-compare">
   <h2>Compare suburbs side by side</h2>
-  <p class="sub">Add any suburbs — from the shortlist or the full 1,873 — and line them up across every metric at once. This is the head-to-head the per-suburb lookup can't give you; the <span class="hit">best value in each row is highlighted</span>. Hazard and per-bedroom links are in the last rows for each.</p>
+  <p class="sub">Add any suburbs — from the shortlist or the full 1,873 — and line them up across every growth-fundamentals metric at once. This is the head-to-head the per-suburb lookup can't give you; the <span class="hit">best value in each row is highlighted</span>. Hazard and selling-agent links are in the last rows. No dollar figures — this is a fundamentals-only comparison.</p>
   <input id="cmpq" type="text" placeholder="➕ Add a suburb to compare — type a name (e.g. Gladstone, Spearwood)…" oninput="cmpSuggest(this.value)" autocomplete="off">
   <div id="cmpSuggest"></div>
   <div id="cmpChips" class="cmpchips"></div>
@@ -990,11 +967,12 @@ details{{margin-top:10px}} summary{{cursor:pointer;color:var(--accent);font-size
   <h2>Method &amp; limitations</h2>
   <div class="panel">
     <p class="m-detail"><b>All data is real and public:</b> median house &amp; attached (townhouse/villa) prices (state valuers-general via ABS Data by Region), median rent, net internal + overseas migration, dwelling approvals &amp; stock, income, unemployment, Census industry-of-employment — joined to ABS population by SA2.</p>
+    <p class="m-detail" style="margin-top:8px"><b>No dollar figures are displayed.</b> This is a pure growth-<i>fundamentals</i> view. The composite score still uses price internally — for <b>rental yield</b> (15%) and <b>housing affordability</b> (9%, price-to-income) — so those price-derived signals shape the ranking, but the underlying dollar amounts aren't shown. Where yield matters to a decision we surface it non-numerically: a <span class="hit">✓</span> means the suburb clears the ~4.5%+ market-yield gate. For actual sold prices and agent price points, use the <b>RateMyAgent</b> link on each suburb.</p>
     <p class="m-detail" style="margin-top:8px"><b>Two strategies, scored separately:</b> "Houses" uses established-house medians &amp; house-based yield; "Townhouses/Villas" uses attached-dwelling medians &amp; attached yield. Shared macro signals (population, migration, supply, diversity, jobs) apply to both. Apartment-dominated SA2s (house median &lt; 0.85× unit) are dropped from the <i>house</i> list only.</p>
     <p class="m-detail" style="margin-top:8px"><b>Industry-diversity / single-industry risk</b> from Census shares across 19 ANZSIC industries; rewards spread, penalises commodity (mining+agri) exposure. <b>Trap-aware:</b> a 5,000-population floor keeps thin, illiquid towns off the shortlist.</p>
     <p class="m-detail" style="margin-top:8px"><b>Supply rule (committed influx ≠ developable land):</b> building approvals are a <i>known, committed</i> supply influx — distinct from developable land, which is uncertain and long-term (councils can change plans). A large influx drowns capital growth, so a suburb is <b>ruled out</b> if dwelling approvals exceed <b>8% of dwelling stock</b> either in the suburb itself or across its <b>5km catchment</b> (centroids from ABS ASGS boundaries; {n_ruled} suburbs removed — mostly greenfield estates like Ripley, Munno Para West, Alkimos). The "Supply 5km" column shows how close a survivor sits to that limit.</p>
     <p class="m-detail" style="margin-top:8px"><b>Gentrification potential (socio-economic):</b> from ABS SEIFA 2021 (IRSAD). Low socio-economic areas are among the biggest capital-growth drivers — but only when they're <i>improving</i>. The signal = <b>disadvantage × momentum</b> (people moving in + price growth), so a cheap, disadvantaged suburb with strong inflow (Munno Para West, Redbank Plains, Yarrabilba) scores high, while an equally cheap suburb that's losing people (Corio, Norlane) is flagged a <b>trap</b>, not a buy. The unemployment penalty was reduced so the model doesn't double-count disadvantage.</p>
-    <details><summary>Known limitations</summary><p class="m-detail" style="margin-top:8px">Census rent understates market rent (uplift applied). Prices are 2024 medians nowcast to ~present (a capped trend estimate). "H:U var" is the 2024 house÷unit ratio — a wide gap (≥1.6×) means houses carry a big land premium; ⚠ &lt;0.85× flags a thin house sample. Rent isn't split by dwelling type, so attached yield reuses the all-dwelling median rent.</p></details>
+    <details><summary>Known limitations</summary><p class="m-detail" style="margin-top:8px">Census rent understates market rent (an uplift is applied) and isn't split by dwelling type, so attached yield reuses the all-dwelling median rent. The price inputs behind the yield/affordability scores are 2024 ABS SA2-area medians nowcast to ~present (a capped trend estimate) — good enough for relative ranking, which is why they inform the score but aren't shown as figures. Apartment-heavy SA2s (house median &lt; 0.85× unit) are dropped from the house list to avoid a thin house sample.</p></details>
   </div>
 
   {framework}
@@ -1005,7 +983,7 @@ details{{margin-top:10px}} summary{{cursor:pointer;color:var(--accent);font-size
   <div class="foot">
     <p><b>What Sersi is:</b> an automated research agent that ranks Australian suburbs on the macro fundamentals that drive capital growth, rebuilt daily from 100% free public data (ABS + state valuers-general) — no listings, Domain-free.</p>
     <p><b>Not financial advice.</b> General information only, not personal financial or investment advice. Do your own research and seek licensed advice before acting.</p>
-    <p><b>About the prices:</b> figures are <b>ABS SA2-area sold-transfer medians</b> (a whole statistical area, not one named suburb), 2024 vintage escalated ~2.5yr to today. They typically read <b>below realestate.com.au</b> (named-suburb asking/AVM) and can be off 10–20% for a single suburb, so use them for <b>relative ranking</b> and verify the live median via the link in each lookup before acting. Accurate current medians need a paid source (Domain <i>Business</i> plan or CoreLogic/Cotality) — the free tier only carries listings.</p>
+    <p><b>Why no prices?</b> Sersi deliberately shows <b>no dollar figures</b> — it ranks suburbs on the growth <i>fundamentals</i> that move before price does, so you compare potential without anchoring on a headline median. Price still feeds the score internally (rental yield + affordability), surfaced only as a <b>✓ yield gate</b>. For actual sold prices, price points and who's selling, open the <b>RateMyAgent</b> link on any suburb — it ranks agents by sales volume and shows each one's median sale price.</p>
     <p class="refreshline"><b>🔄 Last refreshed:</b> {built}. Sersi re-runs the full pipeline automatically every morning (~7am AEST). <b>Data vintage:</b> {generated} — ABS "Data by Region" only updates a few times a year, so on most days there's <b>no material change</b> and the daily update above will say so; the page is still rebuilt and re-verified each morning.</p>
     <p>Population &amp; regional data © Australian Bureau of Statistics (ABS Data API, "Data by Region"). Policy &amp; catalyst figures from cited government/industry sources.</p>
   </div>
@@ -1016,17 +994,22 @@ details{{margin-top:10px}} summary{{cursor:pointer;color:var(--accent);font-size
 <script>
 var LOOKUP = {lookupdata};
 var CMP_DEFAULT = {cmpdefault};
-var VGMED = {vgmed};        // [[name, house_median, unit/attached_median, house_asof, unit_asof, state]] real VG sold medians (VIC + NSW)
+// asset = [price(hidden→null), score, band(hidden→null), cycle, market_yield, gross_yield].
+// No dollar figures are shown — yield is rendered only as a ✓/— gate at ~4.5% market yield.
+function yldGate(a){{ return a && a[4]>=4.5; }}
+function yldCell(a){{ return a? (yldGate(a)?'<b class="hit">✓</b> <span class="sub2">clears 4.5%+ yield gate</span>':'<span class="sub2">— below 4.5% yield gate</span>') : '—'; }}
 function fmtAsset(label, a){{
   if(!a) return '<div><span>'+label+':</span> —</div>';
-  var gy=(a[5]!=null?a[5]:a[4]);
-  return '<div><span>'+label+':</span> ≈$'+a[0].toLocaleString()+' · score '+a[1]+' · '+a[3]+
-    ' · gross yld <b>'+gy.toFixed(1)+'%</b> (mkt ~'+a[4].toFixed(1)+'%) · '+a[2]+'</div>';
+  return '<div><span>'+label+':</span> score <b>'+a[1]+'</b> · '+a[3]+' · '+yldCell(a)+'</div>';
 }}
 // suburb name before the SA2 " - " compound, for cleaner external links
 function coreName(n){{ return (n||'').split(' - ')[0]; }}
-function reaSlug(s){{ return encodeURIComponent(coreName(s.n))+',+'+(s.st||'').toLowerCase(); }}
 function gsearch(s, terms){{ return 'https://www.google.com/search?q='+encodeURIComponent(coreName(s.n)+' '+s.st+' '+terms); }}
+// RateMyAgent ranks agents by sales volume in a suburb and shows each agent's median sale
+// price — so it's how you find who sells the most there (and who sells at cheaper price points).
+// Their page needs a postcode we don't hold, so we deep-link via a site-scoped search that
+// lands on the suburb's agent ranking. Free, no scraping.
+function raLink(s){{ var nm=coreName(s.n).replace(/\\s*\\([^)]*\\)/g,'').trim(); return 'https://www.google.com/search?q='+encodeURIComponent('site:ratemyagent.com.au '+nm+' '+s.st+' agents'); }}
 // State-correct hazard viewers. Zoning is parcel-level (8 different state schemas),
 // so we can't auto-flag or filter at suburb level on free data — these open the
 // authoritative map where you check the exact address. Google fallback always resolves.
@@ -1044,41 +1027,17 @@ function hazLink(s, kind, label){{
   var url=(kind==='flood'?h.f:h.b) || gsearch(s, kind==='flood'?'flood map':'bushfire prone land map');
   return '<a target="_blank" rel="noopener" href="'+url+'">'+label+'</a>';
 }}
-function bedLink(s, n){{
-  return '<a target="_blank" rel="noopener" href="https://www.realestate.com.au/sold/property-house-with-'+
-    n+'-bedrooms-in-'+reaSlug(s)+'/list-1">'+n+'BR</a>';
-}}
-function vgSearch(q){{
-  // Real Valuer-General named-suburb medians (VIC + NSW) — served for ANY covered suburb by
-  // name, independent of whether it exact-matches a scored SA2 row.
-  // entry = [name, house, unit/attached, house_asof, unit_asof, state]
-  var hits=VGMED.filter(function(v){{return v[0].toLowerCase().indexOf(q)>=0;}}).slice(0,10);
-  if(!hits.length) return '';
-  return '<div class="lucard vgcard"><h4>📗 Real sold medians · Valuer-General (VIC + NSW)</h4><div class="lugrid">'+
-    hits.map(function(v){{
-      return '<div style="grid-column:1/-1"><b>'+v[0]+'</b> <span class="sub2">'+v[5]+'</span> — '+
-        (v[1]?'house <b>$'+v[1].toLocaleString()+'</b> <span class="sub2">('+(v[3]||'')+')</span>':'')+
-        (v[1]&&v[2]?' · ':'')+
-        (v[2]?'unit/attached <b>$'+v[2].toLocaleString()+'</b> <span class="sub2">('+(v[4]||'')+')</span>':'')+'</div>';
-    }}).join('')+'</div><div class="panel-note" style="margin-top:6px">Actual sold medians for the named suburb (not the wider ABS area). VIC (quarterly) &amp; NSW (2025) live; other states use the ABS estimate.</div></div>';
-}}
 function doLookup(q){{
   var box=document.getElementById('lookupResults');
   q=(q||'').trim().toLowerCase();
   if(q.length<2){{box.innerHTML='';return;}}
-  var vg=vgSearch(q);
   var hits=LOOKUP.filter(function(s){{return s.n.toLowerCase().indexOf(q)>=0;}}).slice(0,25);
-  if(!hits.length){{box.innerHTML=vg||('<div class="panel-note">No suburb matches "'+q+'".</div>');return;}}
-  box.innerHTML=vg+hits.map(function(s){{
+  if(!hits.length){{box.innerHTML='<div class="panel-note">No suburb matches "'+q+'".</div>';return;}}
+  box.innerHTML=hits.map(function(s){{
     var g = s.gf==='Gentrifying' ? ('▲ Gentrifying'+(s.ic?' ✓ (income confirming)':'')) : (s.gf==='Trap'?'▼ Trap':'');
     return '<div class="lucard"><h4>'+(s.hs?'🔥 ':'')+s.n+' <span style="color:var(--muted);font-weight:600">· '+s.st+'</span></h4>'+
       '<div class="lugrid">'+
-      (s.lv?'<div style="grid-column:1/-1"><span>🟢 Live Domain median (asking):</span> <b>$'+s.lv.toLocaleString()+'</b></div>':'')+
-      fmtAsset('House (ABS est)', s.h)+fmtAsset('Townhouse/villa', s.t)+
-      ((s.vm||s.vu)?'<div style="grid-column:1/-1" class="vgline"><span>📗 Real sold median (VG):</span> '+
-        (s.vm?'house <b>$'+s.vm.toLocaleString()+'</b> <span class="sub2">('+(s.va||'')+')</span>':'')+
-        (s.vm&&s.vu?' · ':'')+
-        (s.vu?'unit/attached <b>$'+s.vu.toLocaleString()+'</b> <span class="sub2">('+(s.vua||'')+')</span>':'')+'</div>':'')+
+      fmtAsset('House', s.h)+fmtAsset('Townhouse/villa', s.t)+
       '<div style="grid-column:1/-1"><span>Housing mix:</span> '+(s.dh!=null?
         s.dh+'% house · '+s.dt+'% townhouse · '+s.df+'% flat'+
         (s.dh<60?' <span class="sub2">(flat-heavy — the house median rests on a thin sample)</span>':''):'—')+'</div>'+
@@ -1096,12 +1055,9 @@ function doLookup(q){{
       '<div style="grid-column:1/-1;margin-top:4px"><span>⚠️ Check hazards:</span> '+
         hazLink(s,'flood','🌊 Flood map')+' · '+hazLink(s,'bush','🔥 Bushfire map')+
         '<span class="sub2"> — zoning is per-property; a suburb can be only partly affected. Confirm the exact address before buying.</span></div>'+
-      '<div style="grid-column:1/-1"><span>Price by config (live sold):</span> '+
-        bedLink(s,2)+' · '+bedLink(s,3)+' · '+bedLink(s,4)+
-        '<span class="sub2"> — the ABS median blends all sizes; these show recent sold prices split by bedroom count.</span></div>'+
-      '<div style="grid-column:1/-1;margin-top:4px"><span>Verify live median:</span> '+
-        '<a target="_blank" rel="noopener" href="https://www.realestate.com.au/buy/in-'+reaSlug(s)+'/list-1">realestate.com.au</a> · '+
-        '<a target="_blank" rel="noopener" href="'+gsearch(s,'median house price')+'">median lookup</a></div>'+
+      '<div style="grid-column:1/-1;margin-top:4px"><span>🧑‍💼 Selling agents:</span> '+
+        '<a target="_blank" rel="noopener" href="'+raLink(s)+'">Top-selling agents · RateMyAgent →</a>'+
+        '<span class="sub2"> — ranks agents by sales volume in this suburb and shows each agent\\'s median sale price, so you can see who sells the most and who transacts at cheaper price points.</span></div>'+
       '</div></div>';
   }}).join('');
 }}
@@ -1123,17 +1079,16 @@ function cmpAdd(name){{
   renderCompare();
 }}
 function cmpRemove(name){{ CMP=CMP.filter(function(s){{return s.n!==name;}}); renderCompare(); }}
-function cmpYld(a){{ return a? (a[5]!=null?a[5]:a[4]) : null; }}
+// Yield gate (✓/—) for the compare grid — a scoring input surfaced non-numerically.
+function cmpGate(a){{ return a? (a[4]>=4.5?1:0) : null; }}
+function fmtGate(v){{ return v==null?'—':(v?'✓':'—'); }}
 var CMP_ROWS=[
   {{l:'State', g:function(s){{return s.st;}}}},
-  {{l:'House price (est)', g:function(s){{return s.h?s.h[0]:null;}}, f:function(v){{return v==null?'—':'$'+v.toLocaleString();}}}},
-  {{l:'📗 Real sold median · house (VG)', g:function(s){{return s.vm||null;}}, f:function(v){{return v==null?'—':'$'+v.toLocaleString();}}}},
-  {{l:'📗 Real sold median · unit/attached (VG)', g:function(s){{return s.vu||null;}}, f:function(v){{return v==null?'—':'$'+v.toLocaleString();}}}},
-  {{l:'House gross yield', dir:'high', g:function(s){{return cmpYld(s.h);}}, f:function(v){{return v==null?'—':v.toFixed(1)+'%';}}}},
-  {{l:'House cycle', g:function(s){{return s.h?s.h[3]:'—';}}}},
   {{l:'House score /100', dir:'high', g:function(s){{return s.h?s.h[1]:null;}}}},
-  {{l:'Townhouse price (est)', g:function(s){{return s.t?s.t[0]:null;}}, f:function(v){{return v==null?'—':'$'+v.toLocaleString();}}}},
-  {{l:'Townhouse gross yield', dir:'high', g:function(s){{return cmpYld(s.t);}}, f:function(v){{return v==null?'—':v.toFixed(1)+'%';}}}},
+  {{l:'House cycle', g:function(s){{return s.h?s.h[3]:'—';}}}},
+  {{l:'House yield gate (4.5%+)', dir:'high', g:function(s){{return cmpGate(s.h);}}, f:fmtGate}},
+  {{l:'Townhouse score /100', dir:'high', g:function(s){{return s.t?s.t[1]:null;}}}},
+  {{l:'Townhouse yield gate (4.5%+)', dir:'high', g:function(s){{return cmpGate(s.t);}}, f:fmtGate}},
   {{l:'Projected 10yr growth', dir:'high', g:function(s){{return s.pj;}}, f:function(v){{return v==null?'—':'+'+v+'%';}}}},
   {{l:'Pop growth /yr', dir:'high', g:function(s){{return s.pg;}}, f:function(v){{return v==null?'—':v+'%';}}}},
   {{l:'Net migration /1k', dir:'high', g:function(s){{return s.mig;}}}},
@@ -1146,7 +1101,7 @@ var CMP_ROWS=[
   {{l:'Economy', g:function(s){{return s.eb||'—';}}}},
   {{l:'Top industries', g:function(s){{return (s.i3&&s.i3.length)?s.i3.join(', '):'—';}}}},
   {{l:'⚠️ Hazard check', g:function(s){{return hazLink(s,'flood','🌊 Flood')+' · '+hazLink(s,'bush','🔥 Bushfire');}}}},
-  {{l:'Prices by config', g:function(s){{return bedLink(s,2)+' · '+bedLink(s,3)+' · '+bedLink(s,4);}}}}
+  {{l:'🧑‍💼 Selling agents', g:function(s){{return '<a target="_blank" rel="noopener" href="'+raLink(s)+'">RateMyAgent →</a>';}}}}
 ];
 function renderCompare(){{
   var chips=document.getElementById('cmpChips'), tbl=document.getElementById('cmpTable');

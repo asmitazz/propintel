@@ -28,6 +28,11 @@ from .db import connect, finish_run, now_iso, start_run, state_from_sa2
 
 OUTPUT = ROOT / "data" / "suburb_analysis.json"
 
+# The public site shows pure growth fundamentals with no dollar figures, so the state
+# Valuer-General dollar medians are no longer pulled or displayed. Flip to True to
+# re-enable the display overlay (and re-add the vg_* display fields in report.py).
+VG_DISPLAY = False
+
 WEIGHTS = {
     "yield": 0.15,
     "population_growth": 0.12,
@@ -299,14 +304,21 @@ def build_analysis() -> dict:
         except Exception:
             dwmix = {}
         # State Valuer-General real named-suburb medians (display-only overlay, NOT scored).
-        try:
-            vg_vic = vg_prices.pull_vic_medians()
-        except Exception:
-            vg_vic = {}
-        try:
-            vg_nsw = vg_prices.pull_nsw_medians()
-        except Exception:
-            vg_nsw = {}
+        # The public site was pivoted to pure growth-fundamentals with no $ figures shown,
+        # so the VG dollar medians are no longer displayed. Kept behind a flag (not deleted):
+        # flip VG_DISPLAY back on and re-add the display fields to re-enable. The pulls are the
+        # slow part of the run (~90s for NSW), so gating them here also speeds the daily rebuild.
+        if VG_DISPLAY:
+            try:
+                vg_vic = vg_prices.pull_vic_medians()
+            except Exception:
+                vg_vic = {}
+            try:
+                vg_nsw = vg_prices.pull_nsw_medians()
+            except Exception:
+                vg_nsw = {}
+        else:
+            vg_vic, vg_nsw = {}, {}
 
         # 5km supply-influx catchment (committed building approvals ÷ dwelling stock)
         centroids = abs_geo.fetch_sa2_centroids()
