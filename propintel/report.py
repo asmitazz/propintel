@@ -1106,21 +1106,28 @@ function gsearch(s, terms){{ return 'https://www.google.com/search?q='+encodeURI
 // Their page needs a postcode we don't hold, so we deep-link via a site-scoped search that
 // lands on the suburb's agent ranking. Free, no scraping.
 function raLink(s){{ var nm=coreName(s.n).replace(/\\s*\\([^)]*\\)/g,'').trim(); return 'https://www.google.com/search?q='+encodeURIComponent('site:ratemyagent.com.au '+nm+' '+s.st+' agents'); }}
-// State-correct hazard viewers. Zoning is parcel-level (8 different state schemas),
-// so we can't auto-flag or filter at suburb level on free data — these open the
-// authoritative map where you check the exact address. Google fallback always resolves.
+// State-correct hazard / amenity viewers. Exposure is parcel-level (8 different state
+// schemas), so we can't auto-flag at suburb level on free data — these open the
+// authoritative map where you check the exact address. f=flood, b=bushfire, n=aircraft
+// noise (ANEF contours), p=power/transmission-line easements. The general planning
+// viewers (NSW/VIC/SA/TAS/ACT) carry the noise + easement overlays too, so n/p reuse
+// them; where a state only has a single-purpose tool (QLD flood, WA), n/p are omitted and
+// fall through to a scoped search that always resolves.
 var HAZ={{
-  NSW:{{f:'https://www.planningportal.nsw.gov.au/spatialviewer/', b:'https://www.planningportal.nsw.gov.au/spatialviewer/'}},
-  VIC:{{f:'https://mapshare.vic.gov.au/vicplan/', b:'https://mapshare.vic.gov.au/vicplan/'}},
+  NSW:{{f:'https://www.planningportal.nsw.gov.au/spatialviewer/', b:'https://www.planningportal.nsw.gov.au/spatialviewer/', n:'https://www.planningportal.nsw.gov.au/spatialviewer/', p:'https://www.planningportal.nsw.gov.au/spatialviewer/'}},
+  VIC:{{f:'https://mapshare.vic.gov.au/vicplan/', b:'https://mapshare.vic.gov.au/vicplan/', n:'https://mapshare.vic.gov.au/vicplan/', p:'https://mapshare.vic.gov.au/vicplan/'}},
   QLD:{{f:'https://floodcheck.information.qld.gov.au/', b:null}},
-  SA:{{f:'https://sappa.plan.sa.gov.au/', b:'https://sappa.plan.sa.gov.au/'}},
+  SA:{{f:'https://sappa.plan.sa.gov.au/', b:'https://sappa.plan.sa.gov.au/', n:'https://sappa.plan.sa.gov.au/', p:'https://sappa.plan.sa.gov.au/'}},
   WA:{{f:'https://maps.water.wa.gov.au/floodmap/', b:'https://maps.slip.wa.gov.au/landgate/bushfireprone/'}},
-  TAS:{{f:'https://maps.thelist.tas.gov.au/listmap/app/list/map', b:'https://maps.thelist.tas.gov.au/listmap/app/list/map'}},
-  ACT:{{f:'https://www.actmapi.act.gov.au/', b:'https://www.actmapi.act.gov.au/'}}
+  TAS:{{f:'https://maps.thelist.tas.gov.au/listmap/app/list/map', b:'https://maps.thelist.tas.gov.au/listmap/app/list/map', n:'https://maps.thelist.tas.gov.au/listmap/app/list/map', p:'https://maps.thelist.tas.gov.au/listmap/app/list/map'}},
+  ACT:{{f:'https://www.actmapi.act.gov.au/', b:'https://www.actmapi.act.gov.au/', n:'https://www.actmapi.act.gov.au/', p:'https://www.actmapi.act.gov.au/'}}
 }};
+var _HAZQ={{flood:'flood map', bush:'bushfire prone land map',
+           noise:'aircraft noise ANEF contour map', power:'electricity transmission line easement map'}};
 function hazLink(s, kind, label){{
   var h=HAZ[s.st]||{{}};
-  var url=(kind==='flood'?h.f:h.b) || gsearch(s, kind==='flood'?'flood map':'bushfire prone land map');
+  var key={{flood:'f', bush:'b', noise:'n', power:'p'}}[kind];
+  var url=h[key] || gsearch(s, _HAZQ[kind]);   // absent/null key falls through to the scoped search
   return '<a target="_blank" rel="noopener" href="'+url+'">'+label+'</a>';
 }}
 function doLookup(q){{
@@ -1149,9 +1156,10 @@ function doLookup(q){{
       '<div><span>Owner-occupiers:</span> '+(s.oo!=null? '<b>'+s.oo+'%</b> own'+
         (s.od!=null?' <span class="sub2">('+(s.od>0?'+':'')+s.od+'pp vs 2016'+(s.od>0?', owners moving in':(s.od<0?', investors gaining':''))+')</span>':'') : '—')+'</div>'+
       '<div style="grid-column:1/-1"><span>Top industries:</span> '+(s.i3&&s.i3.length?s.i3.join(' · '):'—')+'</div>'+
-      '<div style="grid-column:1/-1;margin-top:4px"><span>⚠️ Check hazards:</span> '+
-        hazLink(s,'flood','🌊 Flood map')+' · '+hazLink(s,'bush','🔥 Bushfire map')+
-        '<span class="sub2"> — zoning is per-property; a suburb can be only partly affected. Confirm the exact address before buying.</span></div>'+
+      '<div style="grid-column:1/-1;margin-top:4px"><span>⚠️ Check hazards &amp; amenity:</span> '+
+        hazLink(s,'flood','🌊 Flood')+' · '+hazLink(s,'bush','🔥 Bushfire')+' · '+
+        hazLink(s,'noise','🔊 Aircraft noise')+' · '+hazLink(s,'power','⚡ Power lines')+
+        '<span class="sub2"> — all four are per-property: open the viewer, search the exact address, and (in a planning viewer) toggle the airport-noise or electricity-easement layer. A suburb can be only partly affected.</span></div>'+
       '<div style="grid-column:1/-1;margin-top:4px"><span>🧑‍💼 Selling agents:</span> '+
         '<a target="_blank" rel="noopener" href="'+raLink(s)+'">Top-selling agents · RateMyAgent →</a>'+
         '<span class="sub2"> — ranks agents by sales volume in this suburb and shows each agent\\'s median sale price, so you can see who sells the most and who transacts at cheaper price points.</span></div>'+
@@ -1197,7 +1205,7 @@ var CMP_ROWS=[
   {{l:'Socio-economic', g:function(s){{return s.ses==null?'—':('decile '+s.ses+(s.gf==='Gentrifying'?' ▲':''));}}}},
   {{l:'Economy', g:function(s){{return s.eb||'—';}}}},
   {{l:'Top industries', g:function(s){{return (s.i3&&s.i3.length)?s.i3.join(', '):'—';}}}},
-  {{l:'⚠️ Hazard check', g:function(s){{return hazLink(s,'flood','🌊 Flood')+' · '+hazLink(s,'bush','🔥 Bushfire');}}}},
+  {{l:'⚠️ Hazard / amenity check', g:function(s){{return hazLink(s,'flood','🌊 Flood')+' · '+hazLink(s,'bush','🔥 Bushfire')+' · '+hazLink(s,'noise','🔊 Noise')+' · '+hazLink(s,'power','⚡ Power');}}}},
   {{l:'🧑‍💼 Selling agents', g:function(s){{return '<a target="_blank" rel="noopener" href="'+raLink(s)+'">RateMyAgent →</a>';}}}}
 ];
 function renderCompare(){{
