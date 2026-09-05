@@ -881,16 +881,24 @@ h3.ph::after{{content:"";flex:1;height:1px;background:var(--line)}}
 .stat .v{{font-family:var(--mono);font-size:23px;font-weight:600;letter-spacing:-.01em}} .stat .l{{font-size:12px;color:var(--muted);margin-top:2px}}
 /* Horizontal tab bar across the top (sticky), content full-width below it */
 .layout{{display:block;margin-top:12px}}
-.sidebar{{position:sticky;top:0;z-index:30;display:flex;flex-direction:row;flex-wrap:wrap;gap:4px;width:100%;background:color-mix(in srgb,var(--bg) 88%,transparent);backdrop-filter:blur(8px);border-bottom:1px solid var(--line);padding:10px 0;margin-bottom:18px}}
+.sidebar{{position:sticky;top:0;z-index:30;width:100%;background:color-mix(in srgb,var(--bg) 90%,transparent);backdrop-filter:blur(10px);border-bottom:1px solid var(--line);padding:10px 0;margin-bottom:20px}}
 .content{{width:100%;min-width:0}}
-.ptab{{background:transparent;border:1px solid transparent;border-radius:8px;padding:7px 12px;font-family:var(--mono);font-size:12.5px;font-weight:500;letter-spacing:.01em;color:var(--muted);cursor:pointer;white-space:nowrap;transition:color .12s,background .12s}}
-.ptab:hover{{background:var(--panel2);color:var(--ink)}}
-.ptab.active{{color:var(--accent);background:var(--accent-soft);border-color:var(--accent);font-weight:600}}
+/* Row 1 — primary group tabs (strong surface). Row 2 — sub-tabs of the active group (quiet). */
+.gnav{{display:flex;flex-wrap:wrap;gap:4px}}
+.gtab{{background:transparent;border:1px solid transparent;border-radius:9px;padding:8px 16px;font-family:var(--mono);font-size:13px;font-weight:500;letter-spacing:.04em;color:var(--muted);cursor:pointer;white-space:nowrap;transition:color .12s,background .12s}}
+.gtab:hover{{background:var(--panel2);color:var(--ink)}}
+.gtab.active{{color:var(--accent);background:var(--accent-soft);border-color:var(--accent);font-weight:600}}
+.subnav{{display:flex;flex-wrap:wrap;gap:3px;margin-top:8px;padding-top:8px;border-top:1px solid var(--line)}}
+.subtab{{background:transparent;border:1px solid transparent;border-radius:7px;padding:5px 12px;font-family:var(--mono);font-size:11.5px;letter-spacing:.02em;color:var(--muted);cursor:pointer;white-space:nowrap}}
+.subtab:hover{{background:var(--panel2);color:var(--ink)}}
+.subtab.active{{color:var(--accent);background:var(--accent-soft);border-color:var(--line2);font-weight:600}}
 .page{{display:none}} .page.active{{display:block}}
-/* Mobile: same bar, but swipe sideways instead of wrapping */
+/* Mobile: 5 group tabs fit one row at 375px; sub-tabs wrap quietly beneath. */
 @media(max-width:760px){{
-  .sidebar{{flex-wrap:wrap;overflow:visible;gap:5px;padding:8px 0;box-shadow:0 2px 8px rgba(0,0,0,.06)}}
-  .ptab{{flex:0 0 auto;padding:6px 10px;font-size:12.5px}}
+  .sidebar{{padding:8px 0}}
+  .gnav{{gap:2px;flex-wrap:nowrap}}
+  .gtab{{flex:1 1 0;min-width:0;text-align:center;padding:8px 3px;font-size:11.5px;letter-spacing:0}}
+  .subtab{{padding:5px 9px;font-size:11px}}
 }}
 /* Floating back-to-top */
 .totop{{position:fixed;right:16px;bottom:16px;width:46px;height:46px;border-radius:50%;background:var(--accent);color:#fff;border:none;font-size:20px;line-height:1;cursor:pointer;box-shadow:0 3px 12px rgba(0,0,0,.28);opacity:0;pointer-events:none;transition:opacity .2s;z-index:40}}
@@ -906,9 +914,13 @@ h3.ph::after{{content:"";flex:1;height:1px;background:var(--line)}}
   .lookup input{{font-size:14px;padding:10px 12px}}
 }}
 .lookup{{margin:6px 0 4px}}
-.lookup input{{width:100%;padding:14px 16px;font-size:15px;font-family:var(--sans);border:1px solid var(--line2);border-radius:10px;background:var(--panel);color:var(--ink);box-shadow:var(--shadow)}}
+.lookup-field{{position:relative}}
+.lookup input{{width:100%;padding:14px 46px 14px 16px;font-size:15px;font-family:var(--sans);border:1px solid var(--line2);border-radius:10px;background:var(--panel);color:var(--ink);box-shadow:var(--shadow)}}
 .lookup input:focus{{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}}
 .lookup input::placeholder{{color:var(--muted)}}
+.lookup-x{{position:absolute;right:9px;top:50%;transform:translateY(-50%);width:28px;height:28px;border-radius:50%;border:1px solid var(--line2);background:var(--chip);color:var(--muted);font-size:12px;line-height:1;cursor:pointer;display:flex;align-items:center;justify-content:center}}
+.lookup-x:hover{{color:var(--ink);border-color:var(--accent);background:var(--accent-soft)}}
+#lookupResults:not(:empty){{margin-top:10px;max-height:min(68vh,700px);overflow-y:auto;border:1px solid var(--line);border-radius:12px;padding:10px;background:var(--panel2)}}
 .pricebasis{{font-size:12px;color:var(--muted);background:var(--accent-soft);border:1px solid var(--line);border-radius:8px;padding:8px 12px;margin-top:8px}}
 /* ---- Compare tab ---- */
 #cmpq{{width:100%;padding:12px 14px;font-size:15px;border:1px solid var(--line);border-radius:10px;background:var(--panel);color:var(--ink)}}
@@ -928,7 +940,6 @@ h3.ph::after{{content:"";flex:1;height:1px;background:var(--line)}}
 .cmpbest{{background:var(--accent-soft);font-weight:700}}
 .vgline{{background:var(--accent-soft);border-radius:6px;padding:4px 8px}}
 .vgcard{{border-left:3px solid var(--accent)}}
-#lookupResults{{margin-top:10px}}
 .lucard{{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px 16px;margin-bottom:10px;box-shadow:var(--shadow);border-left:3px solid var(--accent)}}
 .lucard h4{{margin:0 0 8px;font-family:var(--serif);font-weight:600;font-size:16.5px}}
 .lugrid{{display:grid;grid-template-columns:repeat(auto-fill,minmax(155px,1fr));gap:7px 16px;font-size:12.5px}}
@@ -998,24 +1009,23 @@ details{{margin-top:10px}} summary{{cursor:pointer;color:var(--accent);font-size
 
 
   <div class="lookup">
-    <input id="q" type="text" placeholder="🔎 Look up any suburb — type a name (e.g. Geelong, Lara, Broadmeadows)…" oninput="doLookup(this.value)" autocomplete="off">
+    <div class="lookup-field">
+      <input id="q" type="text" placeholder="🔎 Look up any suburb — type a name (e.g. Geelong, Lara, Broadmeadows)…" oninput="doLookup(this.value)" onkeydown="if(event.key==='Escape')clearLookup()" autocomplete="off">
+      <button class="lookup-x" id="lookupX" onclick="clearLookup()" hidden aria-label="Clear search" title="Clear (Esc)">✕</button>
+    </div>
     <div id="lookupResults"></div>
   </div>
 
   <div class="layout">
   <nav class="sidebar">
-    <button class="ptab active" onclick="showPage('summary')">⭐ Summary</button>
-    <button class="ptab" onclick="showPage('shortlist')">📊 Shortlist</button>
-    <button class="ptab" onclick="showPage('compare')">⚖️ Compare</button>
-    <button class="ptab" onclick="showPage('trends')">📈 Trends</button>
-    <button class="ptab" onclick="showPage('outlook')">🔮 10yr Outlook</button>
-    <button class="ptab" onclick="showPage('economy')">🏭 Economy</button>
-    <button class="ptab" onclick="showPage('scenario')">🔗 Scenario &amp; Ripple</button>
-    <button class="ptab" onclick="showPage('news')">📰 News</button>
-    <button class="ptab" onclick="showPage('catalysts')">🎯 Catalysts</button>
-    <button class="ptab" onclick="showPage('policy')">🏛 Policy</button>
-    <button class="ptab" onclick="showPage('context')">🧭 Context</button>
-    <button class="ptab" onclick="showPage('method')">📐 Method</button>
+    <div class="gnav">
+      <button class="gtab active" data-group="overview" onclick="showGroup('overview')">Overview</button>
+      <button class="gtab" data-group="suburbs" onclick="showGroup('suburbs')">Suburbs</button>
+      <button class="gtab" data-group="market" onclick="showGroup('market')">Market</button>
+      <button class="gtab" data-group="drivers" onclick="showGroup('drivers')">Drivers</button>
+      <button class="gtab" data-group="method" onclick="showGroup('method')">Method</button>
+    </div>
+    <div class="subnav" id="subnav" hidden></div>
   </nav>
   <div class="content">
 
@@ -1023,7 +1033,10 @@ details{{margin-top:10px}} summary{{cursor:pointer;color:var(--accent);font-size
 
   <div class="page" id="page-shortlist">
   <h2>Shortlist by strategy &amp; state</h2>
-  <p class="sub"><b>Growth-fundamentals ranking — no prices shown.</b> Composite score (0–100) per asset = yield 15 · <b>gentrification 12</b> · population growth 12 · net migration 10 · <b>ripple 10</b> · affordability 9 · industry diversity 9 · supply scarcity 8 · runway (not-already-run) 6 · economic health 4 · liquidity 5. Yield and affordability are still scoring inputs, but the site leads purely with fundamentals, so we show the <b>Yield</b> gate as <span class="hit">✓</span> (clears ~4.5%+ market yield) rather than a dollar figure. <b>Ripple</b> = % below similar-income neighbours within 10km (arbitrage upside). <b>Econ base</b> = industry mix (Anchor / Mixed / Commodity — hover for top-3). <b>SES</b> = socio-economic decile (1 = most disadvantaged): <span class="hit">▲ gentrifying</span> · <span class="warn-flag">▼ trap</span>. <b>Cycle</b>: <span class="badge b-early">Early</span> · <span class="badge b-mid">Mid</span> · <span class="badge b-late">Late</span>. <b>Houses</b> = land play; <b>Townhouses/villas</b> = lower entry, higher yield.</p>
+  <p class="sub"><b>Growth-fundamentals ranking — no prices shown.</b> Every suburb scored on the signals that move before price; <b>Yield <span class="hit">✓</span></b> = clears the ~4.5%+ market-yield gate. Pick a strategy, then a state.</p>
+  <details class="methoddrop"><summary>How the score works &amp; column key</summary>
+    <p class="m-detail" style="margin-top:8px">Composite score (0–100) per asset = yield 15 · <b>gentrification 12</b> · population growth 12 · net migration 10 · <b>ripple 10</b> · affordability 9 · industry diversity 9 · supply scarcity 8 · runway (not-already-run) 6 · economic health 4 · liquidity 5. Yield &amp; affordability use price internally but aren't shown as figures. <b>Ripple</b> = % below similar-income neighbours within 10km. <b>Econ base</b> = industry mix (Anchor / Mixed / Commodity). <b>SES</b> = socio-economic decile (1 = most disadvantaged): <span class="hit">▲ gentrifying</span> · <span class="warn-flag">▼ trap</span>. <b>Cycle</b>: <span class="badge b-early">Early</span> · <span class="badge b-mid">Mid</span> · <span class="badge b-late">Late</span>. Houses = land play; townhouses/villas = lower entry, higher yield.</p>
+  </details>
   <div class="strat-tabs">{stratnav}</div>
   {stratblocks}
   </div>
@@ -1112,6 +1125,7 @@ function hazLink(s, kind, label){{
 }}
 function doLookup(q){{
   var box=document.getElementById('lookupResults');
+  document.getElementById('lookupX').hidden=!(document.getElementById('q').value);
   q=(q||'').trim().toLowerCase();
   if(q.length<2){{box.innerHTML='';return;}}
   var hits=LOOKUP.filter(function(s){{return s.n.toLowerCase().indexOf(q)>=0;}}).slice(0,25);
@@ -1209,12 +1223,47 @@ function renderCompare(){{
   tbl.innerHTML=html+'</tbody></table>';
 }}
 try{{ (CMP_DEFAULT||[]).forEach(cmpAdd); }}catch(e){{}}
+// ---- Two-level navigation: 5 primary groups → sub-tabs of the active group ----
+// showPage(id) still drives everything (incl. in-content jump() buttons); it derives the
+// group from the page id so a jump always lights the right group AND its sub-tabs.
+var GROUPS=[
+  ['overview','Overview',[['summary','Summary']]],
+  ['suburbs','Suburbs',[['shortlist','Shortlist'],['compare','Compare']]],
+  ['market','Market',[['trends','Trends'],['outlook','10-yr Outlook'],['economy','Economy']]],
+  ['drivers','Drivers',[['catalysts','Catalysts'],['policy','Policy'],['scenario','Scenario & Ripple'],['news','News']]],
+  ['method','Method',[['context','Context'],['method','Method']]]
+];
+var _lastPage={{}};   // group key -> last page visited within it
+function _grpOf(id){{
+  for(var i=0;i<GROUPS.length;i++){{var ps=GROUPS[i][2];
+    for(var j=0;j<ps.length;j++){{if(ps[j][0]===id)return GROUPS[i];}}}}
+  return GROUPS[0];
+}}
+function _renderSub(grp,activeId){{
+  var box=document.getElementById('subnav'),ps=grp[2];
+  if(ps.length<=1){{box.innerHTML='';box.hidden=true;return;}}
+  box.hidden=false;
+  box.innerHTML=ps.map(function(p){{
+    return '<button class="subtab'+(p[0]===activeId?' active':'')+'" onclick="showPage(\\''+p[0]+'\\')">'+p[1]+'</button>';
+  }}).join('');
+}}
 function showPage(id){{
   document.querySelectorAll('.page').forEach(function(p){{p.classList.toggle('active',p.id==='page-'+id)}});
-  document.querySelectorAll('.ptab').forEach(function(b){{b.classList.toggle('active',b.getAttribute('onclick').indexOf("'"+id+"'")>=0)}});
-  // land on the content: bring the layout (sidebar + content) to the top
+  var grp=_grpOf(id); _lastPage[grp[0]]=id;
+  document.querySelectorAll('.gtab').forEach(function(b){{b.classList.toggle('active',b.getAttribute('data-group')===grp[0])}});
+  _renderSub(grp,id);
+  // land on the content: bring the layout (nav + content) to the top
   var lay=document.querySelector('.layout');
   if(lay){{var y=lay.getBoundingClientRect().top+window.pageYOffset-8;window.scrollTo(0,Math.max(0,y));}}
+}}
+function showGroup(key){{
+  var grp=GROUPS.filter(function(g){{return g[0]===key;}})[0]||GROUPS[0];
+  showPage(_lastPage[key]||grp[2][0][0]);   // resume last page in the group, else its first
+}}
+function clearLookup(){{
+  var q=document.getElementById('q');
+  q.value=''; document.getElementById('lookupResults').innerHTML='';
+  document.getElementById('lookupX').hidden=true; q.focus();
 }}
 function showStrategy(a){{
   document.querySelectorAll('.strat').forEach(function(s){{s.classList.toggle('active',s.id==='strat-'+a)}});
@@ -1225,6 +1274,12 @@ function showBand(a,b){{
   strat.querySelectorAll('.tabpanel').forEach(function(p){{p.classList.toggle('active',p.id==='panel-'+a+'-'+b)}});
   strat.querySelectorAll('.tabbtn').forEach(function(x){{x.classList.toggle('active',x.getAttribute('data-band')===a+'-'+b)}});
 }}
+// initialise the nav for the default (Summary) page without scrolling
+(function(){{
+  var grp=_grpOf('summary');
+  document.querySelectorAll('.gtab').forEach(function(b){{b.classList.toggle('active',b.getAttribute('data-group')===grp[0])}});
+  _lastPage[grp[0]]='summary'; _renderSub(grp,'summary');
+}})();
 // show the back-to-top button once you've scrolled a bit
 window.addEventListener('scroll',function(){{
   var b=document.getElementById('toTop'); if(b) b.classList.toggle('show', window.pageYOffset>350);
