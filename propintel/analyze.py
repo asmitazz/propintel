@@ -567,6 +567,22 @@ def build_analysis() -> dict:
         except Exception as e:
             print(f"[analyze] market-now join skipped: {str(e)[:80]}")
 
+        # Real per-suburb SOLD-price change + buyer activity from the state Valuer-General
+        # (NSW rolling-12 to the week; VIC latest quarter). Current, actual sales — the freshest
+        # per-suburb data there is. Exact state+name match only (no fuzzy split). Display-only.
+        try:
+            vgp = ROOT / "data" / "vg_yoy.json"
+            vg_yoy = json.loads(vgp.read_text()) if vgp.exists() else {}
+            nvg = 0
+            for r in records:
+                v = vg_yoy.get(f"{r['state']}|{r['name'].strip().upper()}")
+                if v:
+                    r["vgc"] = v
+                    nvg += 1
+            print(f"[analyze] VG sold-change attached to {nvg}/{len(records)} suburbs")
+        except Exception as e:
+            print(f"[analyze] VG sold-change join skipped: {str(e)[:80]}")
+
         ruled_out.sort(key=lambda r: max(r.get("suburb_influx_pct") or 0, r.get("catchment_influx_pct") or 0), reverse=True)
         OUTPUT.write_text(json.dumps({
             "generated": now_iso(), "count": len(records), "weights": WEIGHTS,

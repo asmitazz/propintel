@@ -847,6 +847,7 @@ def _lookup_data(recs: list[dict], live: dict) -> str:
             "idc": r.get("id_council"), "idb": r.get("id_pop_base"), "idby": r.get("id_year_base"),
             "idf": r.get("id_pop_fc"), "idfy": r.get("id_year_fc"), "idg": r.get("id_growth_pct"),
             "mkt": r.get("mkt"),   # current capital-city price direction (Cotality) reality check
+            "vgc": r.get("vgc"),   # real per-suburb VG sold-price change + buyer activity (VIC/NSW)
         })
     return json.dumps(out, separators=(",", ":"))
 
@@ -1254,6 +1255,14 @@ function doLookup(q){{
         (s.mkt.r?'<span class="sub2">regional — no free capital-city index; see this state\\'s trend in Market → Trends</span>':
           '<b class="'+(s.mkt.y>0?'hit':(s.mkt.y<0?'warn-flag':''))+'">'+s.mkt.c+' '+(s.mkt.y>0?'+':'')+s.mkt.y+'%/yr</b>'+
           ' <span class="sub2">('+(s.mkt.m>0?'+':'')+s.mkt.m+'% last month) — the ranking is built on ABS fundamentals lagged ~1–3yr; this is how Greater '+s.mkt.c+'\\'s market is actually moving <b>right now</b> (Cotality).</span>')+'</div>':'')+
+      (s.vgc?'<div style="grid-column:1/-1;margin-top:4px"><span>📗 Actual sold-price change (VG · '+s.vgc.asof+'):</span> '+
+        (s.vgc.h_yoy!=null?'<b class="'+(s.vgc.h_yoy>0?'hit':(s.vgc.h_yoy<0?'warn-flag':''))+'">house '+(s.vgc.h_yoy>0?'+':'')+s.vgc.h_yoy+'%</b>'+(s.vgc.h_n?' <span class="sub2">(n='+s.vgc.h_n+')</span>':''):'')+
+        (s.vgc.a_yoy!=null?(s.vgc.h_yoy!=null?' · ':'')+'<b class="'+(s.vgc.a_yoy>0?'hit':(s.vgc.a_yoy<0?'warn-flag':''))+'">unit/attached '+(s.vgc.a_yoy>0?'+':'')+s.vgc.a_yoy+'%</b>'+(s.vgc.a_n?' <span class="sub2">(n='+s.vgc.a_n+')</span>':''):'')+
+        ((s.vgc.vol!=null&&s.h&&s.h[3]==='Early'&&s.vgc.h_yoy!=null&&s.vgc.h_yoy<0)?' <b class="warn-flag">⚠ labelled "Early cycle" but sold prices are actually falling now</b>':'')+
+        '<span class="sub2"> — real Valuer-General sold medians ('+s.vgc.asof+' vs '+s.vgc.prior+'), the freshest per-suburb price data there is; the rank still uses lagged ABS.</span></div>':'')+
+      (s.vgc&&s.vgc.vol?'<div style="grid-column:1/-1"><span>🏠 Buyer activity (where people are buying):</span> <b>'+s.vgc.vol.toLocaleString()+'</b> sales in the last 12mo'+
+        (s.vgc.vol_chg!=null?' <b class="'+(s.vgc.vol_chg>0?'hit':(s.vgc.vol_chg<0?'warn-flag':''))+'">('+(s.vgc.vol_chg>0?'+':'')+s.vgc.vol_chg+'% vs prior yr)</b>':'')+
+        '<span class="sub2"> — actual transaction volume from the NSW land registry; rising = more buyers active here.</span></div>':'')+
       '<div style="grid-column:1/-1;margin-top:4px"><span>🔎 Current sold prices (any state):</span> '+
         '<a target="_blank" rel="noopener" href="'+soldLink(s)+'">realestate.com.au →</a> · '+
         '<a target="_blank" rel="noopener" href="'+domainSoldLink(s)+'">Domain →</a>'+

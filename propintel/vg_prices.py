@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import io
 import json
+import re
 import statistics
 import zipfile
 from collections import defaultdict
@@ -216,12 +217,20 @@ def _parse_vic_yoy(content: bytes) -> dict[str, dict]:
             col_period[c] = (year, _QUARTER_ORDER[qlabel])
     if not col_period:
         return {}
-    latest = max(col_period, key=lambda c: col_period[c])
-    yr, qo = col_period[latest]
-    prior = next((c for c, p in col_period.items() if p == (yr - 1, qo)), None)
-    if prior is None:
+    # The VG report carries ~5 quarters (some periods repeat across sub-columns), so a
+    # 4-quarter average isn't available — use the latest quarter vs the SAME quarter a year
+    # earlier. First de-dupe to one column per period (keep the right-most = the data column).
+    period_col = {}
+    for c in sorted(col_period):
+        period_col.setdefault(col_period[c], c)   # leftmost col of each period = the median
+    latest_p = max(period_col)
+    yr, qo = latest_p
+    prior_c = period_col.get((yr - 1, qo))
+    if prior_c is None:
         return {}
-    qname = next(k for k, v in _QUARTER_ORDER.items() if v == qo)
+    latest_c = period_col[latest_p]
+    qn = {v: k for k, v in _QUARTER_ORDER.items()}
+    asof, prior = f"{qn[qo]} {yr}", f"{qn[qo]} {yr-1}"
 
     def _num(raw):
         if isinstance(raw, (int, float)) and raw > 10000:
@@ -230,6 +239,7 @@ def _parse_vic_yoy(content: bytes) -> dict[str, dict]:
             s = raw.replace(",", "").replace("$", "").strip()
             return int(s) if s.isdigit() and int(s) > 10000 else None
         return None
+
     out = {}
     for r in range(sh.nrows):
         name = sh.cell_value(r, 0)
@@ -238,10 +248,9 @@ def _parse_vic_yoy(content: bytes) -> dict[str, dict]:
         key = name.strip().upper()
         if key in ("LOCALITY", "TOTAL", "GRAND TOTAL") or key in _QUARTER_ORDER:
             continue
-        cur, prev = _num(sh.cell_value(r, latest)), _num(sh.cell_value(r, prior))
+        cur, prev = _num(sh.cell_value(r, latest_c)), _num(sh.cell_value(r, prior_c))
         if cur and prev:
-            out[key] = {"yoy": round((cur / prev - 1) * 100, 1),
-                        "asof": f"{qname} {yr}", "prior": f"{qname} {yr-1}"}
+            out[key] = {"yoy": round((cur / prev - 1) * 100, 1), "asof": asof, "prior": prior}
     return out
 
 
@@ -255,37 +264,151 @@ def _nsw_year_raw(year: str) -> dict[str, dict]:
     return {loc: {"h": house.get(loc, []), "a": attached.get(loc, [])} for loc in set(house) | set(attached)}
 
 
+# ---- NSW rolling-12 (current to within a week) ----
+_NSW_EMBED = "https://valuation.property.nsw.gov.au/embed/propertySalesInformation"
+_NSW_BASE = "https://www.valuergeneral.nsw.gov.au/__psi"
+_NSW_HDR = {"Referer": _NSW_EMBED}   # weekly files 403 without a referer (hotlink protection)
+
+
+def _nsw_parse_dated(text: str, sales: dict) -> None:
+    """Accumulate (contract_date 'YYYYMMDD', price, kind) per locality — dates kept for rolling."""
+    for line in text.splitlines():
+        if not line.startswith("B;"):
+            continue
+        f = line.split(";")
+        if len(f) < 19 or f[18].strip().upper() != "RESIDENCE":
+            continue
+        loc = f[9].strip().upper()
+        cdate = f[13].strip()
+        if not loc or len(cdate) != 8 or not cdate.isdigit():
+            continue
+        try:
+            price = int(f[15])
+        except (ValueError, IndexError):
+            continue
+        if price < 200000:
+            continue
+        sales[loc].append((cdate, price, "a" if f[6].strip() else "h"))   # unit-no ⇒ attached
+
+
+def _nsw_zip_dated(raw: bytes, sales: dict) -> None:
+    z = zipfile.ZipFile(io.BytesIO(raw))
+    for name in z.namelist():
+        if name.lower().endswith(".zip"):
+            _nsw_zip_dated(z.read(name), sales)
+        elif name.upper().endswith(".DAT"):
+            _nsw_parse_dated(z.read(name).decode("latin-1", "ignore"), sales)
+
+
+def _nsw_weekly_urls() -> list[str]:
+    """Current-year weekly PSI zip URLs. Primary: the public NSW VG listing (independently
+    found), retried because it's intermittently empty. Fallback: probe recent weekly dates
+    directly, so a flaky listing can't silently drop the current-year data."""
+    import datetime
+    for _ in range(4):
+        try:
+            html = cf.get(_NSW_EMBED, impersonate="chrome", timeout=40).text
+            dates = sorted(set(re.findall(r"/__psi/weekly/(\d{8})\.zip", html)))
+            if dates:
+                return [f"{_NSW_BASE}/weekly/{d}.zip" for d in dates]
+        except Exception:
+            pass
+    # fallback: probe the last ~40 weeks of dated URLs directly (with the referer)
+    hits, today = [], datetime.date.today()
+    for i in range(0, 300, 7):
+        d = (today - datetime.timedelta(days=i)).strftime("%Y%m%d")
+        try:
+            if cf.head(f"{_NSW_BASE}/weekly/{d}.zip", impersonate="chrome", timeout=15,
+                       headers=_NSW_HDR).status_code == 200:
+                hits.append(f"{_NSW_BASE}/weekly/{d}.zip")
+        except Exception:
+            pass
+    return hits
+
+
+def _nsw_rolling_yoy() -> dict[str, dict]:
+    """Per-locality house/attached median change: rolling last-12-months vs the prior 12,
+    bucketed by contract date (current to the latest weekly file). ≥20 sales in EACH window."""
+    import datetime
+    import statistics
+    sales: dict[str, list] = defaultdict(list)
+    weeks = _nsw_weekly_urls()                         # get the listing FIRST — the heavy archive
+    got = 0                                            # downloads below throttle later requests
+    for yr in ("2024", "2025"):                       # cover the prior-12 window's tail
+        try:
+            r = cf.get(f"{_NSW_BASE}/yearly/{yr}.zip", impersonate="chrome", timeout=180, headers=_NSW_HDR)
+            if r.status_code == 200:
+                _nsw_zip_dated(r.content, sales)
+        except Exception:
+            pass
+    for u in weeks:                                    # current-year weeklies → to within a week
+        try:
+            r = cf.get(u, impersonate="chrome", timeout=60, headers=_NSW_HDR)
+            if r.status_code == 200 and r.content[:2] == b"PK":
+                _nsw_zip_dated(r.content, sales)
+                got += 1
+        except Exception:
+            pass
+    print(f"  [NSW] weekly URLs: {len(weeks)}, downloaded: {got}")
+    if not sales:
+        return {}
+    import datetime
+    today = datetime.date.today().strftime("%Y%m%d")
+    latest = max((d for rows in sales.values() for d, _, _ in rows if d <= today), default=None)
+    if latest is None:
+        return {}
+    ld = datetime.datetime.strptime(latest, "%Y%m%d").date()
+    b1 = (ld - datetime.timedelta(days=365)).strftime("%Y%m%d")   # last-12 start
+    b2 = (ld - datetime.timedelta(days=730)).strftime("%Y%m%d")   # prior-12 start
+    asof = f"rolling 12mo to {ld.strftime('%d %b %Y')}"
+    out: dict[str, dict] = {}
+    for loc, rows in sales.items():
+        cur_n = sum(1 for d, _, _ in rows if b1 < d <= latest)
+        prev_n = sum(1 for d, _, _ in rows if b2 < d <= b1)
+        if cur_n < 20:                     # too little current activity to say anything
+            continue
+        # Buyer activity ("where people are buying"): total sales this year, and vs last year.
+        rec = {"state": "NSW", "asof": asof, "prior": "prior 12mo", "vol": cur_n}
+        if prev_n >= 20:
+            rec["vol_chg"] = round((cur_n / prev_n - 1) * 100)
+        for kind in ("h", "a"):            # price change, split house vs attached
+            cur = [p for d, p, k in rows if k == kind and b1 < d <= latest]
+            prev = [p for d, p, k in rows if k == kind and b2 < d <= b1]
+            if len(cur) >= 20 and len(prev) >= 20:
+                c, p = statistics.median(cur), statistics.median(prev)
+                if p > 0:
+                    rec[f"{kind}_yoy"] = round((c / p - 1) * 100, 1)
+                    rec[f"{kind}_n"] = len(cur)
+        out[f"NSW|{loc}"] = rec
+    return out
+
+
 def build_yoy(nsw_cur: str = "2025", nsw_prev: str = "2024") -> dict[str, dict]:
     """{"STATE|SUBURB_UPPER": {state, h_yoy, h_n, a_yoy, a_n, asof, prior}} — current per-suburb
     SOLD-price change from the state Valuer-General (far fresher than the 2024 ABS medians the rank
     uses). Keyed by STATE|name to avoid cross-state collisions (e.g. Richmond NSW vs VIC). NSW is
     computed from raw sales (≥20 in each year); VIC from VG's published quarterly medians."""
     out: dict[str, dict] = {}
-
-    def _yoy(cur_list, prev_list, minn=20):
-        if len(cur_list) < minn or len(prev_list) < minn:
-            return None
-        c, p = statistics.median(cur_list), statistics.median(prev_list)
-        return (round((c / p - 1) * 100, 1), len(cur_list)) if p > 0 else None
-
     try:
-        cur, prev = _nsw_year_raw(nsw_cur), _nsw_year_raw(nsw_prev)
-        for loc in set(cur) & set(prev):
-            hy = _yoy(cur[loc]["h"], prev[loc]["h"])
-            ay = _yoy(cur[loc]["a"], prev[loc]["a"])
-            if hy or ay:
-                out[f"NSW|{loc}"] = {"state": "NSW", "asof": nsw_cur, "prior": nsw_prev,
-                                     "h_yoy": hy[0] if hy else None, "h_n": hy[1] if hy else None,
-                                     "a_yoy": ay[0] if ay else None, "a_n": ay[1] if ay else None}
+        out.update(_nsw_rolling_yoy())          # NSW: rolling-12 price + buyer-activity, to the week
     except Exception:
         pass
+    def _fetch_xls(url):                          # land.vic.gov.au WAF serves HTML intermittently
+        for _ in range(4):
+            c = cf.get(url, impersonate="chrome", timeout=60).content
+            if c[:5] != b"<!DOC":
+                return c
+        return None
     try:
         for pkg, field in [("victorian-property-sales-report-median-house-by-suburb", "h_yoy"),
                            ("victorian-property-sales-report-median-unit-by-suburb", "a_yoy")]:
             url = _latest_xls_url(pkg)
             if not url:
                 continue
-            vic = _parse_vic_yoy(cf.get(url, impersonate="chrome", timeout=60).content)
+            content = _fetch_xls(url)
+            if not content:
+                continue
+            vic = _parse_vic_yoy(content)
             for sub, v in vic.items():
                 rec = out.setdefault(f"VIC|{sub}", {"state": "VIC", "asof": v["asof"], "prior": v["prior"]})
                 rec[field] = v["yoy"]
