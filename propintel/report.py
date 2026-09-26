@@ -294,7 +294,9 @@ def _macro_section(macro: dict) -> str:
               <span class="sub2"> · {i["metric"]}</span></div></div>
             <span class="badge {cls}">{lbl}</span></div>
           {chart}
-          <p class="m-detail macro-rule"><b>Rule:</b> {i["rule"]}{vote}</p>
+          <p class="macro-plain">{i.get("plain", "")}</p>
+          <details class="macro-method"><summary>How Sersi reads it</summary>
+            <p class="m-detail" style="margin-top:6px">{i["rule"]}{vote}</p></details>
           <div class="src">{i["source"]} · as at {i["asof"]}</div>
         </div>'''
     return f'''<h2>Macro &amp; leading indicators</h2>
@@ -303,7 +305,8 @@ def _macro_section(macro: dict) -> str:
     and what that condition has <i>historically been associated with</i>. Three indicators vote (rates,
     unemployment, insolvencies); the mortgage rate is context and household debt an amplifier.</p>
     <div class="banner"><b>Where the cycle sits (as at {macro.get("asof","")}):</b> {comp.get("read","—")}
-    <span class="sub2"> — general information from public data, not a prediction or personal advice (see footer).</span></div>
+    <br><span style="display:inline-block;margin-top:6px">{comp.get("plain","")}</span>
+    <br><span class="sub2">General information from public data, not a prediction or personal advice (see footer).</span></div>
     <div class="macro-grid">{cards}</div>'''
 
 
@@ -1010,7 +1013,8 @@ h3.ph::after{{content:"";flex:1;height:1px;background:var(--line)}}
 .macro-name{{font-family:var(--mono);font-size:11.5px;letter-spacing:.04em;text-transform:uppercase;color:var(--muted)}}
 .macro-val{{font-family:var(--serif);font-size:24px;font-weight:600;line-height:1.1;margin-top:2px}}
 .macro-unit{{font-size:13px;color:var(--muted);margin-left:2px}}
-.macro-rule{{margin-top:8px;font-size:12.5px;line-height:1.5}}
+.macro-plain{{margin:8px 0 0;font-size:13.5px;line-height:1.55;color:var(--ink)}}
+.macro-method{{margin-top:6px}} .macro-method summary{{font-family:var(--mono);font-size:11px;letter-spacing:.03em;color:var(--muted)}}
 .macro-card .chart{{border:none;padding:0;background:transparent;margin:2px 0}}
 .macro-card .src{{margin-top:8px;font-family:var(--mono);font-size:10.5px;color:var(--muted)}}
 .chart{{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px 16px}}

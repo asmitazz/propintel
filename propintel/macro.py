@@ -274,41 +274,61 @@ def build_macro() -> dict:
 
     inds = []
 
-    def add(key, label, unit, source, pairs, state, metric, rule, votes, series_n=132):
+    def _dir_word(state, up="rising", down="falling", flat="steady"):
+        return {"headwind": up, "tailwind": down, "neutral": flat}.get(state, "")
+
+    def add(key, label, unit, source, pairs, state, metric, rule, plain, votes, series_n=132):
         if not pairs:
             return
         inds.append({
             "key": key, "label": label, "unit": unit, "source": source,
             "series": _series(pairs, series_n), "current": round(pairs[-1][1], 2),
             "last_dt": pairs[-1][0], "asof": pairs[-1][0].strftime("%b %Y"),
-            "state": state, "metric": metric, "rule": rule, "vote": votes,
+            "state": state, "metric": metric, "rule": rule, "plain": plain, "vote": votes,
         })
 
     if cash:
         st, chg = _dir_state(cash, 12, up_is="headwind")
+        plain = ("The Reserve Bank's official interest rate — the master dial for how expensive it is to borrow in "
+                 "Australia. " + ("It's been <b>rising</b>, so loans cost more, buyers can borrow less, and price growth "
+                 "usually cools." if st == "headwind" else "It's been <b>falling</b>, so loans get cheaper, buyers can "
+                 "borrow more, and prices usually firm up (with a lag)." if st == "tailwind" else "It's been roughly "
+                 "<b>flat</b> — no fresh push either way."))
         add("cash", "RBA cash rate (monthly avg)", "%", "Reserve Bank of Australia (F1.1)", cash, st,
             f"{chg:+.2f}pp / 12mo" if chg is not None else "—",
             "The policy lever: rate cuts lift borrowing capacity and prices tend to follow with a lag; "
-            "hikes do the reverse. This is the voting 'interest rates' signal.", votes=True)
+            "hikes do the reverse. This is the voting 'interest rates' signal.", plain, votes=True)
     if mort:
         st, chg = _dir_state(mort, 12, up_is="headwind")
         add("mortgage", "Mortgage rate (owner-occ)", "%", "Reserve Bank of Australia (F6)", mort, st,
             f"{chg:+.2f}pp / 12mo" if chg is not None else "—",
             "Context for the cash rate — the actual cost of servicing a loan. Moves with the cash rate, "
-            "so it isn't counted a second time in the composite.", votes=False)
+            "so it isn't counted a second time in the composite.",
+            "What a typical home loan actually costs. When this is higher, monthly repayments are bigger and "
+            "people can borrow less — so fewer buyers can compete and demand softens. It follows the cash rate.",
+            votes=False)
     if unemp:
         st, gap = _sahm(unemp)
+        near = "and it's now close to the level that has historically warned of a recession" if st == "neutral" \
+            else "and it has crossed the level that has historically warned of a recession" if st == "headwind" \
+            else "and it's still low"
         add("unemployment", "Unemployment rate", "%", "ABS Labour Force (seasonally adj.)", unemp, st,
             f"+{gap:.2f}pp vs 12mo low" if gap is not None else "—",
             "Sahm rule: when the 3-month average rises ≥0.5pp above the low of its prior-12-month 3-month "
             "averages, it has historically coincided with recessions. (0.2–0.5pp = Sersi's near-trigger tier.)",
+            "How many people who want work can't find it. When it climbs, households feel less secure — that means "
+            f"fewer confident buyers and more owners who may be forced to sell. It's been ticking up, {near}.",
             votes=True)
     if insol:
         st, pct = _yoy_state(insol)
+        move = _dir_word(st, up="climbing", down="falling", flat="broadly flat")
         add("insolvencies", "Personal insolvencies", "/mo", "AFSA (monthly, personal)", insol, st,
             f"{pct:+.1f}% YoY" if pct is not None else "—",
             "Household financial stress that can precede forced sales — the voting insolvency signal. "
-            "State = year-on-year change (>+10% headwind, <-10% tailwind).", votes=True)
+            "State = year-on-year change (>+10% headwind, <-10% tailwind).",
+            f"How many ordinary people are going broke each month. Rising numbers mean more households in real "
+            f"trouble (and potential forced sales); falling means people are coping. Right now it's <b>{move}</b> "
+            "versus a year ago.", votes=True)
     if asic:
         st, pct = _yoy_state(asic)
         add("asic", "Company insolvencies (ASIC)", "/mo", "ASIC Series 1 (companies entering ext. admin.)",
@@ -316,6 +336,9 @@ def build_macro() -> dict:
             "Context — the widely-quoted 'company insolvencies' series (Series 1: companies entering "
             "external administration). Business failures flow through to jobs and confidence, but it isn't "
             "counted a second time in the composite; the personal-insolvency signal above carries the vote.",
+            "How many businesses are collapsing each month (this is the chart most people mean by 'bankruptcies'). "
+            "A sharp jump like now means job losses and weaker confidence are likely coming — a warning light for "
+            "the wider economy, even though it hits house prices less directly than household stress does.",
             votes=False)
     if dti:
         cur = dti[-1][1]
@@ -325,6 +348,9 @@ def build_macro() -> dict:
             "amplifier", band,
             "Not a buy/sell signal on its own — high household leverage amplifies how sharply the other "
             "indicators feed through to prices (more forced sellers when rates or unemployment rise).",
+            "How big households' debts are compared with what they earn — currently well over 1.5× income, among "
+            "the highest in the world. It doesn't move much month to month, but because people are so stretched, "
+            "any rise in rates or unemployment bites harder and faster than it would elsewhere.",
             votes=False, series_n=120)
 
     # Staleness: any indicator trailing the freshest by >~3 months is badged and drops its vote.
@@ -343,18 +369,27 @@ def build_macro() -> dict:
     if n and head > n / 2:
         read = (f"{head} of {n} voting signals are headwinds — historically associated with a softer, "
                 "later-cycle housing backdrop.")
+        plain = ("In plain terms: most of the big economic dials are pushing against the market right now. "
+                 "That has historically gone with slower, riskier price growth — a time to favour quality and be "
+                 "patient on price rather than chase.")
     elif n and tail > n / 2:
         read = (f"{tail} of {n} voting signals are tailwinds — historically associated with improving "
                 "borrowing capacity and firmer demand (earlier-cycle conditions).")
+        plain = ("In plain terms: the wind is at buyers' backs — cheaper money and a steady economy have "
+                 "historically supported firmer demand and rising prices. Conditions like these tend to reward "
+                 "getting in earlier rather than waiting.")
     elif n:
         read = (f"Signals are mixed ({head} headwind / {tail} tailwind of {n}) — historically a "
                 "transitional backdrop with no clear cycle lean.")
+        plain = ("In plain terms: the market isn't clearly rising or falling. Interest rates are the main "
+                 "pressure, but jobs and household finances are still holding up — so it's more a 'watch closely "
+                 "and buy well' backdrop than a clear signal to pile in or sit out.")
     else:
-        read = ""
+        read, plain = "", ""
 
     return {
         "indicators": inds,
-        "composite": {"headwinds": head, "tailwinds": tail, "n": n, "read": read},
+        "composite": {"headwinds": head, "tailwinds": tail, "n": n, "read": read, "plain": plain},
         "asof": max((i["asof"] for i in inds), key=lambda s: datetime.strptime(s, "%b %Y"), default=""),
     }
 
