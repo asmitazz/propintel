@@ -192,9 +192,123 @@ def pull_nsw_medians() -> dict[str, dict]:
         return {}
 
 
+def _parse_vic_yoy(content: bytes) -> dict[str, dict]:
+    """{SUBURB_UPPER: {yoy, asof, prior}} — VG's published median for the latest quarter vs the
+    SAME quarter a year earlier, both from the one multi-quarter file. VG's medians are already
+    vetted (no per-suburb sample count is published, so we trust them as-is)."""
+    import re
+    import xlrd
+    wb = xlrd.open_workbook(file_contents=content)
+    sh = wb.sheet_by_index(0)
+    q_re = re.compile(r"(Jan-Mar|Apr-Jun|Jul-Sep|Oct-Dec)")
+    y_re = re.compile(r"(20\d{2})")
+    col_period = {}
+    for c in range(sh.ncols):
+        qlabel = year = None
+        for r in range(min(6, sh.nrows)):
+            v = sh.cell_value(r, c)
+            s = v if isinstance(v, str) else (str(int(v)) if isinstance(v, (int, float)) and v else "")
+            if q_re.search(s):
+                qlabel = q_re.search(s).group(1)
+            if y_re.search(s):
+                year = int(y_re.search(s).group(1))
+        if qlabel and year:
+            col_period[c] = (year, _QUARTER_ORDER[qlabel])
+    if not col_period:
+        return {}
+    latest = max(col_period, key=lambda c: col_period[c])
+    yr, qo = col_period[latest]
+    prior = next((c for c, p in col_period.items() if p == (yr - 1, qo)), None)
+    if prior is None:
+        return {}
+    qname = next(k for k, v in _QUARTER_ORDER.items() if v == qo)
+
+    def _num(raw):
+        if isinstance(raw, (int, float)) and raw > 10000:
+            return int(raw)
+        if isinstance(raw, str):
+            s = raw.replace(",", "").replace("$", "").strip()
+            return int(s) if s.isdigit() and int(s) > 10000 else None
+        return None
+    out = {}
+    for r in range(sh.nrows):
+        name = sh.cell_value(r, 0)
+        if not isinstance(name, str) or not name.strip():
+            continue
+        key = name.strip().upper()
+        if key in ("LOCALITY", "TOTAL", "GRAND TOTAL") or key in _QUARTER_ORDER:
+            continue
+        cur, prev = _num(sh.cell_value(r, latest)), _num(sh.cell_value(r, prior))
+        if cur and prev:
+            out[key] = {"yoy": round((cur / prev - 1) * 100, 1),
+                        "asof": f"{qname} {yr}", "prior": f"{qname} {yr-1}"}
+    return out
+
+
+def _nsw_year_raw(year: str) -> dict[str, dict]:
+    r = cf.get(f"https://www.valuergeneral.nsw.gov.au/__psi/yearly/{year}.zip",
+               impersonate="chrome", timeout=180)
+    if r.status_code != 200 or not r.content:
+        return {}
+    house, attached = defaultdict(list), defaultdict(list)
+    _nsw_zip(r.content, house, attached)
+    return {loc: {"h": house.get(loc, []), "a": attached.get(loc, [])} for loc in set(house) | set(attached)}
+
+
+def build_yoy(nsw_cur: str = "2025", nsw_prev: str = "2024") -> dict[str, dict]:
+    """{"STATE|SUBURB_UPPER": {state, h_yoy, h_n, a_yoy, a_n, asof, prior}} — current per-suburb
+    SOLD-price change from the state Valuer-General (far fresher than the 2024 ABS medians the rank
+    uses). Keyed by STATE|name to avoid cross-state collisions (e.g. Richmond NSW vs VIC). NSW is
+    computed from raw sales (≥20 in each year); VIC from VG's published quarterly medians."""
+    out: dict[str, dict] = {}
+
+    def _yoy(cur_list, prev_list, minn=20):
+        if len(cur_list) < minn or len(prev_list) < minn:
+            return None
+        c, p = statistics.median(cur_list), statistics.median(prev_list)
+        return (round((c / p - 1) * 100, 1), len(cur_list)) if p > 0 else None
+
+    try:
+        cur, prev = _nsw_year_raw(nsw_cur), _nsw_year_raw(nsw_prev)
+        for loc in set(cur) & set(prev):
+            hy = _yoy(cur[loc]["h"], prev[loc]["h"])
+            ay = _yoy(cur[loc]["a"], prev[loc]["a"])
+            if hy or ay:
+                out[f"NSW|{loc}"] = {"state": "NSW", "asof": nsw_cur, "prior": nsw_prev,
+                                     "h_yoy": hy[0] if hy else None, "h_n": hy[1] if hy else None,
+                                     "a_yoy": ay[0] if ay else None, "a_n": ay[1] if ay else None}
+    except Exception:
+        pass
+    try:
+        for pkg, field in [("victorian-property-sales-report-median-house-by-suburb", "h_yoy"),
+                           ("victorian-property-sales-report-median-unit-by-suburb", "a_yoy")]:
+            url = _latest_xls_url(pkg)
+            if not url:
+                continue
+            vic = _parse_vic_yoy(cf.get(url, impersonate="chrome", timeout=60).content)
+            for sub, v in vic.items():
+                rec = out.setdefault(f"VIC|{sub}", {"state": "VIC", "asof": v["asof"], "prior": v["prior"]})
+                rec[field] = v["yoy"]
+    except Exception:
+        pass
+    return out
+
+
 if __name__ == "__main__":
-    m = pull_vic_medians()
-    print(f"VIC VG medians: {len(m)} suburbs")
-    for s in ("GEELONG", "MELTON SOUTH", "SPEARWOOD", "CORIO", "LARA", "BROADMEADOWS"):
-        if s in m:
-            print(" ", s, m[s])
+    import json
+    import sys
+    from .config import ROOT
+    if "--yoy" in sys.argv:
+        yoy = build_yoy()
+        nsw = sum(1 for k in yoy if k.startswith("NSW|"))
+        vic = sum(1 for k in yoy if k.startswith("VIC|"))
+        # Guard: a WAF challenge or a failed archive silently yields an empty slice. Refuse to
+        # overwrite a good cache with a broken one — keep the previous file instead.
+        if vic < 500 or nsw < 1000:
+            print(f"REFUSING to write vg_yoy.json — thin result (NSW {nsw}, VIC {vic}); kept previous.")
+        else:
+            (ROOT / "data" / "vg_yoy.json").write_text(json.dumps(yoy, separators=(",", ":")))
+            print(f"Wrote vg_yoy.json — {len(yoy)} suburbs (NSW {nsw}, VIC {vic})")
+    else:
+        m = pull_vic_medians()
+        print(f"VIC VG medians: {len(m)} suburbs")

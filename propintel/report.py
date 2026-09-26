@@ -1209,6 +1209,11 @@ function raLink(s){{ var nm=coreName(s.n).replace(/\\s*\\([^)]*\\)/g,'').trim();
 // council-level (subscribing councils only), so — like the agent/hazard links — we deep-link
 // via a scoped search that lands on the relevant .id profile rather than pulling numbers.
 function idLink(s){{ var nm=coreName(s.n).replace(/\\s*\\([^)]*\\)/g,'').trim(); return 'https://www.google.com/search?q='+encodeURIComponent('site:id.com.au '+nm+' '+s.st+' community profile'); }}
+// Current SOLD prices for a suburb, straight from realestate.com.au — actual recent sales,
+// current to today, every state (incl. WA, which has no free per-suburb sold feed). A link,
+// not scraping, and it keeps dollar figures off Sersi itself. Works from suburb + state.
+function soldLink(s){{ var nm=coreName(s.n).replace(/\\s*\\([^)]*\\)/g,'').toLowerCase().replace(/[^a-z0-9]+/g,'+').replace(/^\\+|\\+$/g,''); return 'https://www.realestate.com.au/sold/in-'+nm+',+'+(s.st||'').toLowerCase()+'/list-1'; }}
+function domainSoldLink(s){{ return 'https://www.domain.com.au/sold-listings/?suburb='+encodeURIComponent(coreName(s.n).replace(/\\s*\\([^)]*\\)/g,'').trim()+'-'+(s.st||'')); }}
 // State-correct hazard / amenity viewers. Exposure is parcel-level (8 different state
 // schemas), so we can't auto-flag at suburb level on free data — these open the
 // authoritative map where you check the exact address. f=flood, b=bushfire, n=aircraft
@@ -1249,6 +1254,10 @@ function doLookup(q){{
         (s.mkt.r?'<span class="sub2">regional — no free capital-city index; see this state\\'s trend in Market → Trends</span>':
           '<b class="'+(s.mkt.y>0?'hit':(s.mkt.y<0?'warn-flag':''))+'">'+s.mkt.c+' '+(s.mkt.y>0?'+':'')+s.mkt.y+'%/yr</b>'+
           ' <span class="sub2">('+(s.mkt.m>0?'+':'')+s.mkt.m+'% last month) — the ranking is built on ABS fundamentals lagged ~1–3yr; this is how Greater '+s.mkt.c+'\\'s market is actually moving <b>right now</b> (Cotality).</span>')+'</div>':'')+
+      '<div style="grid-column:1/-1;margin-top:4px"><span>🔎 Current sold prices (any state):</span> '+
+        '<a target="_blank" rel="noopener" href="'+soldLink(s)+'">realestate.com.au →</a> · '+
+        '<a target="_blank" rel="noopener" href="'+domainSoldLink(s)+'">Domain →</a>'+
+        '<span class="sub2"> — actual recent sales, current to today, the free per-suburb data the rank can\\'t use (Domain/realestate suburb medians sit behind their paid APIs, so Sersi links to them rather than showing a stale number).</span></div>'+
       '<div style="grid-column:1/-1"><span>Housing mix:</span> '+(s.dh!=null?
         s.dh+'% house · '+s.dt+'% townhouse · '+s.df+'% flat'+
         (s.dh<60?' <span class="sub2">(flat-heavy — the house median rests on a thin sample)</span>':''):'—')+'</div>'+
