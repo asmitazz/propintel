@@ -18,8 +18,10 @@ fetch in the daily run.
 """
 from __future__ import annotations
 
+import calendar
 import csv
 import io
+import re
 from datetime import datetime
 
 from curl_cffi import requests as cf
@@ -29,6 +31,10 @@ ABS_LF = ("https://data.api.abs.gov.au/rest/data/LF/M13.3.1599.20.AUS.M"
           "?startPeriod=2015-01&dimensionAtObservation=AllDimensions")
 AFSA_PKG = ("https://data.gov.au/data/api/3/action/package_show?id="
             "4174f850-3d50-4b07-ae1d-4eb38e628bb4")
+ASIC_STATS = ("https://asic.gov.au/regulatory-resources/find-a-document/statistics/"
+              "insolvency-statistics/")
+_MON = {m.lower(): i for i, m in enumerate(
+    ["", "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"])}
 
 _DATE_FMTS = ("%d-%b-%Y", "%b-%Y", "%b-%y", "%d/%m/%Y", "%Y-%m", "%Y-%m-%d")
 
@@ -123,7 +129,7 @@ def _insolvencies():
         pkg = _get(AFSA_PKG).json()["result"]
         url = next(r["url"] for r in pkg["resources"]
                    if (r.get("format") or "").upper() == "CSV" and "time" in r["url"].lower())
-        rows = list(csv.reader(io.StringIO(_get(url).text)))
+        rows = list(csv.reader(io.StringIO(_get(url, timeout=90).text)))   # ~30MB file
         head = [h.strip().lower() for h in rows[0]]
 
         def col(*subs):
@@ -157,6 +163,54 @@ def _insolvencies():
                 monthly[d.strftime("%Y-%m")] = v      # one aggregated cell per month
         out = [(_pdate(k), v) for k, v in monthly.items() if _pdate(k)]
         out.sort(key=lambda x: x[0])
+        return out
+    except Exception:
+        return []
+
+
+def _asic_insolvencies():
+    """ASIC Series 1 — companies entering external administration for the first time,
+    monthly (the widely-quoted 'company insolvencies/bankruptcies' series). The xlsx URL
+    rotates each release, so resolve the latest from the statistics page; drop the partial
+    current month using the file's own 'Data to' date so YoY isn't distorted."""
+    try:
+        page = _get(ASIC_STATS, timeout=30).text
+        m = re.search(r'https://download\.asic\.gov\.au/media/[^"]*series-1[^"]*\.xlsx', page, re.I)
+        if not m:
+            return []
+        import openpyxl
+        raw = _get(m.group(0), timeout=90).content     # ~17MB — needs the longer cap
+        wb = openpyxl.load_workbook(io.BytesIO(raw), read_only=True, data_only=True)
+        # 'Data to' cutoff (Contents sheet) → the current month may be incomplete
+        dto = None
+        for r in list(wb["Contents"].iter_rows(values_only=True))[:14]:
+            for j, c in enumerate(r[:-1]):
+                if isinstance(c, str) and c.strip().lower().startswith("data to"):
+                    dto = r[j + 1]
+        rows = list(wb["1.1"].iter_rows(values_only=True))
+        hdr = rows[11]
+        tc = next((j for j, h in enumerate(hdr) if isinstance(h, str) and h.strip().lower() == "total"), None)
+        if tc is None:
+            return []
+        yc, mc = 2, 4      # Period(year), Period(month) columns in Table 1.1
+        out = []
+        for r in rows[12:]:
+            if len(r) <= tc or not r[mc] or r[yc] is None:
+                continue
+            mi = _MON.get(str(r[mc]).strip()[:3].lower())
+            if not mi:
+                continue
+            try:
+                y = int(r[yc])
+            except (ValueError, TypeError):
+                continue
+            if isinstance(r[tc], (int, float)):
+                out.append((datetime(y, mi, 1), float(r[tc])))
+        out.sort(key=lambda x: x[0])
+        # drop the trailing partial month (Data-to day before the month's end)
+        if dto and out and out[-1][0].year == dto.year and out[-1][0].month == dto.month \
+                and dto.day < calendar.monthrange(dto.year, dto.month)[1]:
+            out = out[:-1]
         return out
     except Exception:
         return []
@@ -216,6 +270,7 @@ def build_macro() -> dict:
     dti = _rba_series("e2", "BHFDDIT")
     unemp = _unemployment()
     insol = _insolvencies()
+    asic = _asic_insolvencies()
 
     inds = []
 
@@ -252,8 +307,16 @@ def build_macro() -> dict:
         st, pct = _yoy_state(insol)
         add("insolvencies", "Personal insolvencies", "/mo", "AFSA (monthly, personal)", insol, st,
             f"{pct:+.1f}% YoY" if pct is not None else "—",
-            "Rising household insolvencies signal financial stress that can precede forced sales; "
-            "state = year-on-year change (>+10% headwind, <-10% tailwind).", votes=True)
+            "Household financial stress that can precede forced sales — the voting insolvency signal. "
+            "State = year-on-year change (>+10% headwind, <-10% tailwind).", votes=True)
+    if asic:
+        st, pct = _yoy_state(asic)
+        add("asic", "Company insolvencies (ASIC)", "/mo", "ASIC Series 1 (companies entering ext. admin.)",
+            asic, st, f"{pct:+.1f}% YoY" if pct is not None else "—",
+            "Context — the widely-quoted 'company insolvencies' series (Series 1: companies entering "
+            "external administration). Business failures flow through to jobs and confidence, but it isn't "
+            "counted a second time in the composite; the personal-insolvency signal above carries the vote.",
+            votes=False)
     if dti:
         cur = dti[-1][1]
         hist_max = max(v for _, v in dti)
