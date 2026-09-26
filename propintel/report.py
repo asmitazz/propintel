@@ -123,8 +123,26 @@ def _row(s: dict, asset: str) -> str:
       <td class="num">{_ses_cell(s)}</td>
       <td><span class="badge {RISK_CLASS.get(risk,'b-flat')}" title="Economic base: {s.get('econ_base','')} · top industries: {_top3_str(s)} · commodity {s.get('commodity_exposure','')}%">{_base_short(s.get('econ_base'))}</span></td>
       <td><span class="badge {CYCLE_CLASS.get(a['cycle'],'b-flat')}">{a['cycle']}</span></td>
+      <td class="num">{_market_cell(s)}</td>
       <td class="num"><b>{a["score"]}</b></td>
     </tr>'''
+
+
+def _market_cell(s: dict) -> str:
+    """Current capital-city price direction (Cotality 1yr) for this suburb's Greater-Capital —
+    reconciles the lagged fundamentals rank with today's market. Regional = no free index."""
+    mk = s.get("mkt")
+    if not mk:
+        return '<span class="sub2">—</span>'
+    if mk.get("r"):
+        return '<span class="sub2" title="Rest-of-state — no free capital-city index; see the suburb\'s state trend">regional</span>'
+    y = mk.get("y")
+    if y is None:
+        return '<span class="sub2">—</span>'
+    cls = "hit" if y > 0 else ("warn-flag" if y < 0 else "sub2")
+    return (f'<span class="{cls}" title="{mk["c"]} dwelling values are {y:+.1f}% over the last year '
+            f'(Cotality HVI) — this suburb sits in Greater {mk["c"]}. The ranking uses ABS fundamentals '
+            f'lagged ~1-3yr, so this is the current-market reality check.">{mk["c"]} {y:+.1f}%</span>')
 
 
 def _table(rows_html: str) -> str:
@@ -135,7 +153,9 @@ def _table(rows_html: str) -> str:
         <th class="num" title="% below similar-income neighbours within 10km (ripple/arbitrage upside)">Ripple</th><th class="num">Pop g/yr</th><th class="num">Net mig /1k</th>
         <th class="num" title="Dwelling-approval influx within 5km as % of stock (rule-out >8%)">Supply 5km</th>
         <th class="num" title="Socio-economic decile (1=most disadvantaged). ▲ gentrifying · ▼ trap">SES</th>
-        <th title="Economic base by industry mix — hover for top industries">Econ base</th><th>Cycle</th><th class="num">Score</th>
+        <th title="Economic base by industry mix — hover for top industries">Econ base</th><th>Cycle</th>
+        <th class="num" title="Current capital-city price direction (Cotality HVI, 1yr) for this suburb's Greater-Capital region — a reality check on the lagged fundamentals rank. 'regional' = rest-of-state, no free index.">Market now</th>
+        <th class="num">Score</th>
       </tr></thead><tbody>{rows_html}</tbody></table></div>'''
 
 
@@ -821,6 +841,7 @@ def _lookup_data(recs: list[dict], live: dict) -> str:
             # .id council-area population forecast (display-only, partial coverage)
             "idc": r.get("id_council"), "idb": r.get("id_pop_base"), "idby": r.get("id_year_base"),
             "idf": r.get("id_pop_fc"), "idfy": r.get("id_year_fc"), "idg": r.get("id_growth_pct"),
+            "mkt": r.get("mkt"),   # current capital-city price direction (Cotality) reality check
         })
     return json.dumps(out, separators=(",", ":"))
 
@@ -1104,6 +1125,7 @@ details{{margin-top:10px}} summary{{cursor:pointer;color:var(--accent);font-size
   <div class="page" id="page-shortlist">
   <h2>Shortlist by strategy &amp; state</h2>
   <p class="sub"><b>Growth-fundamentals ranking — no prices shown.</b> Every suburb scored on the signals that move before price; <b>Yield <span class="hit">✓</span></b> = clears the ~4.5%+ market-yield gate. Pick a strategy, then a state.</p>
+  <div class="banner" style="margin-bottom:14px"><b>Read this as a relative ranking, not a near-term price call.</b> Scores rank suburbs against each other on <b>structural fundamentals</b> from ABS data that lags ~1–3 years (median prices are 2024, nowcast forward), so a strong-fundamentals suburb can still sit in a market that's soft <i>right now</i>. The <b>Market now</b> column (and each lookup card) shows today's actual capital-city direction from Cotality as a reality check — pair it with <b>Market → Trends</b> and <b>Macro signals</b> for where the cycle currently sits.</div>
   <details class="methoddrop"><summary>How the score works &amp; column key</summary>
     <p class="m-detail" style="margin-top:8px">Composite score (0–100) per asset = yield 15 · <b>gentrification 12</b> · population growth 12 · net migration 10 · <b>ripple 10</b> · affordability 9 · industry diversity 9 · supply scarcity 8 · runway (not-already-run) 6 · economic health 4 · liquidity 5. Yield &amp; affordability use price internally but aren't shown as figures. <b>Ripple</b> = % below similar-income neighbours within 10km. <b>Econ base</b> = industry mix (Anchor / Mixed / Commodity). <b>SES</b> = socio-economic decile (1 = most disadvantaged): <span class="hit">▲ gentrifying</span> · <span class="warn-flag">▼ trap</span>. <b>Cycle</b>: <span class="badge b-early">Early</span> · <span class="badge b-mid">Mid</span> · <span class="badge b-late">Late</span>. Houses = land play; townhouses/villas = lower entry, higher yield.</p>
   </details>
@@ -1218,6 +1240,10 @@ function doLookup(q){{
     return '<div class="lucard"><h4>'+(s.hs?'🔥 ':'')+s.n+' <span style="color:var(--muted);font-weight:600">· '+s.st+'</span></h4>'+
       '<div class="lugrid">'+
       fmtAsset('House', s.h)+fmtAsset('Townhouse/villa', s.t)+
+      (s.mkt?'<div style="grid-column:1/-1"><span>📉 Market now (reality check):</span> '+
+        (s.mkt.r?'<span class="sub2">regional — no free capital-city index; see this state\\'s trend in Market → Trends</span>':
+          '<b class="'+(s.mkt.y>0?'hit':(s.mkt.y<0?'warn-flag':''))+'">'+s.mkt.c+' '+(s.mkt.y>0?'+':'')+s.mkt.y+'%/yr</b>'+
+          ' <span class="sub2">('+(s.mkt.m>0?'+':'')+s.mkt.m+'% last month) — the ranking is built on ABS fundamentals lagged ~1–3yr; this is how Greater '+s.mkt.c+'\\'s market is actually moving <b>right now</b> (Cotality).</span>')+'</div>':'')+
       '<div style="grid-column:1/-1"><span>Housing mix:</span> '+(s.dh!=null?
         s.dh+'% house · '+s.dt+'% townhouse · '+s.df+'% flat'+
         (s.dh<60?' <span class="sub2">(flat-heavy — the house median rests on a thin sample)</span>':''):'—')+'</div>'+

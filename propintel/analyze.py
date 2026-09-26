@@ -22,7 +22,7 @@ from __future__ import annotations
 import json
 import math
 
-from . import abs_client, abs_geo, abs_region, cotality, id_forecast, macro, vg_prices
+from . import abs_client, abs_geo, abs_region, cotality, id_forecast, macro, market_now, vg_prices
 from .config import ROOT
 from .db import connect, finish_run, now_iso, start_run, state_from_sa2
 
@@ -550,6 +550,22 @@ def build_analysis() -> dict:
             print(f"[analyze] .id council forecast attached to {n_id}/{len(records)} suburbs")
         except Exception as e:
             print(f"[analyze] .id forecast join skipped: {str(e)[:80]}")
+
+        # 'Market now' cross-reference: tag each suburb with its Greater-Capital's CURRENT
+        # Cotality price direction, so the lagged fundamentals rank sits next to today's
+        # reality (a top VIC pick shows Melbourne's actual −%/yr). Display-only, not scored.
+        try:
+            sa2_gccsa = market_now.load_gccsa()
+            for r in records:
+                mk = market_now.market_for(str(r["code"]), sa2_gccsa, cotality_hvi)
+                if not mk:
+                    continue
+                if mk.get("regional"):
+                    r["mkt"] = {"r": 1}
+                else:
+                    r["mkt"] = {"c": mk["cap"], "y": mk["yr"], "m": mk["mo"]}
+        except Exception as e:
+            print(f"[analyze] market-now join skipped: {str(e)[:80]}")
 
         ruled_out.sort(key=lambda r: max(r.get("suburb_influx_pct") or 0, r.get("catchment_influx_pct") or 0), reverse=True)
         OUTPUT.write_text(json.dumps({
