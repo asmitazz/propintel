@@ -64,7 +64,8 @@ def _ensure_prev() -> None:
                 rec["townhouse"] = {"score": ts, "rank": tr}
             subs.append(rec)
         PREV.parent.mkdir(parents=True, exist_ok=True)
-        PREV.write_text(json.dumps({"generated": sig.get("generated", ""), "suburbs": subs}))
+        PREV.write_text(json.dumps({"generated": sig.get("generated", ""), "suburbs": subs,
+                                    "macro_sig": sig.get("macro")}))
     except Exception:
         pass   # first deploy with the signature, or site not up yet — show baseline msg
 
@@ -249,8 +250,42 @@ def _news_line() -> str:
         return ""
 
 
+_MACRO_LABELS = {"cash": "interest rates", "unemployment": "unemployment",
+                 "insolvencies": "insolvencies", "mortgage": "mortgage rates",
+                 "dti": "household debt"}
+
+
+def _macro_line() -> str:
+    """One-line macro read for the daily update, and a shift alert when a voting indicator
+    changes state vs the previous run (guarded: no prior stamp → no shift claim)."""
+    try:
+        mac = json.loads(CURR.read_text()).get("macro") or {}
+    except Exception:
+        return ""
+    inds = mac.get("indicators") or []
+    if not inds:
+        return ""
+    cur = {i["key"]: i["state"] for i in inds}
+    read = (mac.get("composite") or {}).get("read", "")
+    line = f"\n\n📊 **Macro read** (as at {mac.get('asof','')}): {read}"
+    # shift detection vs previous stamp
+    prev = {}
+    try:
+        pj = json.loads(PREV.read_text())
+        prev = pj.get("macro_sig") or {i["key"]: i["state"] for i in (pj.get("macro") or {}).get("indicators", [])}
+    except Exception:
+        prev = {}
+    if prev:
+        voting = {i["key"] for i in inds if i.get("vote")}
+        shifts = [f"{_MACRO_LABELS.get(k, k)} → {cur[k]}" for k in cur
+                  if k in voting and k in prev and prev[k] != cur[k]]
+        if shifts:
+            line += "\n\n⚠️ **Macro shift** — " + "; ".join(shifts) + " (a change worth noting for the cycle read)."
+    return line
+
+
 def _write(today: str, body: str) -> str:
-    body = body + _news_line() + _catalyst_freshness()
+    body = body + _macro_line() + _news_line() + _catalyst_freshness()
     md = f"# 🛰 Sersi — Daily Update · {today}\n\n{body}\n"
     LATEST.write_text(md)
     with open(CHANGELOG, "a") as fh:

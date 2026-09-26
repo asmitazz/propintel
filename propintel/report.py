@@ -204,7 +204,7 @@ def _scenario_section(recs: list[dict]) -> str:
 CHART_COLORS = ["#4f8bff", "#43c491", "#e0a458", "#f0776c", "#a78bfa", "#22d3ee", "#f472b6", "#94a3b8"]
 
 
-def _line_chart(title, series, x_labels, subtitle=""):
+def _line_chart(title, series, x_labels, subtitle="", decimals=0, max_xlabels=12):
     """Multi-series line chart. series = [{name, values:[float], color}]."""
     W, H, pl, pr, pt, pb = 700, 300, 46, 12, 16, 34
     vals = [v for s in series for v in s["values"] if v is not None]
@@ -217,8 +217,10 @@ def _line_chart(title, series, x_labels, subtitle=""):
     def X(i): return pl + (i / (n - 1) if n > 1 else 0) * (W - pl - pr)
     def Y(v): return H - pb - (v - vmin) / (vmax - vmin) * (H - pt - pb)
     grid = "".join(f'<line x1="{pl}" y1="{Y(vmin+(vmax-vmin)*f)}" x2="{W-pr}" y2="{Y(vmin+(vmax-vmin)*f)}" stroke="var(--line)" stroke-width="1"/>' for f in (0, .25, .5, .75, 1))
-    ylabs = "".join(f'<text x="{pl-6}" y="{Y(vmin+(vmax-vmin)*f)+3}" text-anchor="end" font-size="9" fill="var(--muted)">{round(vmin+(vmax-vmin)*f)}</text>' for f in (0, .5, 1))
-    xlabs = "".join(f'<text x="{X(i)}" y="{H-pb+14}" text-anchor="middle" font-size="9" fill="var(--muted)">{x}</text>' for i, x in enumerate(x_labels))
+    ylabs = "".join(f'<text x="{pl-6}" y="{Y(vmin+(vmax-vmin)*f)+3}" text-anchor="end" font-size="9" fill="var(--muted)">{vmin+(vmax-vmin)*f:.{decimals}f}</text>' for f in (0, .5, 1))
+    # thin x-labels to ~max_xlabels so 100+ monthly points don't overlap
+    step = max(1, -(-n // max_xlabels))
+    xlabs = "".join(f'<text x="{X(i)}" y="{H-pb+14}" text-anchor="middle" font-size="9" fill="var(--muted)">{x}</text>' for i, x in enumerate(x_labels) if i % step == 0 or i == n - 1)
     lines = ""
     for s in series:
         pts = " ".join(f"{X(i):.0f},{Y(v):.0f}" for i, v in enumerate(s["values"]) if v is not None)
@@ -257,6 +259,52 @@ def _hbar(title, pairs, unit="", subtitle=""):
             + (f'<div class="chart-s">{subtitle}</div>' if subtitle else "")
             + f'<svg viewBox="0 0 {W} {H}" preserveAspectRatio="xMidYMid meet">'
             f'<line x1="{zero:.0f}" y1="0" x2="{zero:.0f}" y2="{H-10}" stroke="var(--line)"/>{rows}</svg></div>')
+
+
+_MACRO_STATE = {
+    "headwind": ("b-late", "▼ Headwind"), "tailwind": ("b-early", "▲ Tailwind"),
+    "neutral": ("b-flat", "▬ Neutral"), "amplifier": ("b-mid", "◆ Amplifier"),
+}
+
+
+def _macro_section(macro: dict) -> str:
+    """National leading-indicators dashboard — data + the rule applied + what that condition
+    has historically been associated with. Not a forecast. Empty on missing data."""
+    inds = (macro or {}).get("indicators") or []
+    if not inds:
+        return ""
+    comp = macro.get("composite", {})
+    cards = ""
+    for i in inds:
+        cls, lbl = _MACRO_STATE.get(i["state"], ("b-flat", i["state"]))
+        if i.get("stale"):
+            cls, lbl = "b-flat", "⚠ stale"
+        color = {"b-late": "var(--bad)", "b-early": "var(--good)",
+                 "b-mid": "var(--accent)"}.get(cls, "var(--muted)")
+        dec = 0 if i["unit"] in ("/mo", "% of income", "ratio") else 1
+        vals = [v for _, v in i["series"]]
+        xl = [lab.split("-")[0] for lab, _ in i["series"]]   # year labels
+        chart = _line_chart("", [{"name": i["label"], "values": vals, "color": color}],
+                            xl, decimals=dec, max_xlabels=8)
+        cur = f'{i["current"]:,.1f}' if dec else f'{int(i["current"]):,}'
+        vote = "" if i["vote"] else ' <span class="sub2">(context, not counted)</span>'
+        cards += f'''<div class="panel macro-card">
+          <div class="macro-h"><div><div class="macro-name">{i["label"]}</div>
+            <div class="macro-val">{cur}<span class="macro-unit">{i["unit"]}</span>
+              <span class="sub2"> · {i["metric"]}</span></div></div>
+            <span class="badge {cls}">{lbl}</span></div>
+          {chart}
+          <p class="m-detail macro-rule"><b>Rule:</b> {i["rule"]}{vote}</p>
+          <div class="src">{i["source"]} · as at {i["asof"]}</div>
+        </div>'''
+    return f'''<h2>Macro &amp; leading indicators</h2>
+    <p class="sub">The national cycle backdrop, read from <b>primary free data</b> (RBA, ABS, AFSA) — no
+    trendlines, no forecasts, no borrowed opinions. Each indicator shows its data, the <b>rule</b> applied,
+    and what that condition has <i>historically been associated with</i>. Three indicators vote (rates,
+    unemployment, insolvencies); the mortgage rate is context and household debt an amplifier.</p>
+    <div class="banner"><b>Where the cycle sits (as at {macro.get("asof","")}):</b> {comp.get("read","—")}
+    <span class="sub2"> — general information from public data, not a prediction or personal advice (see footer).</span></div>
+    <div class="macro-grid">{cards}</div>'''
 
 
 def _cotality_section(hvi: dict) -> str:
@@ -799,6 +847,11 @@ def build():
         sig["s"][r["code"]] = [r["name"], r["state"], h.get("score"), h.get("rank"),
                                t.get("score"), t.get("rank"),
                                1 if r.get("hotspot") else 0, r.get("gentrify_flag") or ""]
+    # compact macro stamp so tomorrow's digest can detect a cycle shift (RBA move, Sahm trigger)
+    _mac = data.get("macro") or {}
+    if _mac.get("indicators"):
+        sig["macro"] = {i["key"]: i["state"] for i in _mac["indicators"]}
+        sig["macro"]["_read"] = (_mac.get("composite") or {}).get("read", "")[:24]
     html = _PAGE.format(
         cmpdefault=json.dumps(cmp_default),
         sigdata=json.dumps(sig, separators=(",", ":")),
@@ -807,6 +860,7 @@ def build():
         scenario=_scenario_section(recs), framework=_framework_note(),
         policy=_policy_section(), catalyst=_catalyst_section(), context=_context_section(),
         trends=_cotality_section(data.get("cotality", {})) + _trends_section(data.get("trends", {"states": [], "cities": []})),
+        macro=_macro_section(data.get("macro", {})),
         outlook=_outlook_section(data.get("projections", {}), data.get("trends", {"states": []})),
         summary=_summary_section(recs, data.get("trends", {"states": []}), data.get("projections", {})),
         lookupdata=_lookup_data(recs, live),
@@ -950,6 +1004,15 @@ h3.ph::after{{content:"";flex:1;height:1px;background:var(--line)}}
 .lugrid b{{font-variant-numeric:tabular-nums}}
 .ind{{display:flex;justify-content:space-between;gap:8px;font-size:12px;padding:1px 0}} .indpct{{color:var(--muted);font-variant-numeric:tabular-nums}}
 .chart-grid{{display:grid;grid-template-columns:1fr 1fr;gap:14px}} @media(max-width:820px){{.chart-grid{{grid-template-columns:1fr}}}}
+.macro-grid{{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:6px}} @media(max-width:820px){{.macro-grid{{grid-template-columns:1fr}}}}
+.macro-card{{padding:14px 16px}}
+.macro-h{{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;margin-bottom:8px}}
+.macro-name{{font-family:var(--mono);font-size:11.5px;letter-spacing:.04em;text-transform:uppercase;color:var(--muted)}}
+.macro-val{{font-family:var(--serif);font-size:24px;font-weight:600;line-height:1.1;margin-top:2px}}
+.macro-unit{{font-size:13px;color:var(--muted);margin-left:2px}}
+.macro-rule{{margin-top:8px;font-size:12.5px;line-height:1.5}}
+.macro-card .chart{{border:none;padding:0;background:transparent;margin:2px 0}}
+.macro-card .src{{margin-top:8px;font-family:var(--mono);font-size:10.5px;color:var(--muted)}}
 .chart{{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px 16px}}
 .chart-t{{font-size:14px;font-weight:700;margin-bottom:2px}} .chart-s{{font-size:12px;color:var(--muted);margin-bottom:8px}}
 .chart svg{{width:100%;height:auto}}
@@ -1054,6 +1117,7 @@ details{{margin-top:10px}} summary{{cursor:pointer;color:var(--accent);font-size
   </div>
 
   <div class="page" id="page-trends">{trends}</div>
+  <div class="page" id="page-macro">{macro}</div>
   <div class="page" id="page-outlook">{outlook}</div>
   <div class="page" id="page-economy">{economy}</div>
   <div class="page" id="page-scenario">{scenario}</div>
@@ -1253,7 +1317,7 @@ try{{ (CMP_DEFAULT||[]).forEach(cmpAdd); }}catch(e){{}}
 var GROUPS=[
   ['overview','Overview',[['summary','Summary']]],
   ['suburbs','Suburbs',[['shortlist','Shortlist'],['compare','Compare']]],
-  ['market','Market',[['trends','Trends'],['outlook','10-yr Outlook'],['economy','Economy']]],
+  ['market','Market',[['trends','Trends'],['macro','Macro signals'],['outlook','10-yr Outlook'],['economy','Economy']]],
   ['drivers','Drivers',[['catalysts','Catalysts'],['policy','Policy'],['scenario','Scenario & Ripple'],['news','News']]],
   ['method','Method',[['context','Context'],['method','Method']]]
 ];

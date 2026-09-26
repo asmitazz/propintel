@@ -22,7 +22,7 @@ from __future__ import annotations
 import json
 import math
 
-from . import abs_client, abs_geo, abs_region, cotality, id_forecast, vg_prices
+from . import abs_client, abs_geo, abs_region, cotality, id_forecast, macro, vg_prices
 from .config import ROOT
 from .db import connect, finish_run, now_iso, start_run, state_from_sa2
 
@@ -325,6 +325,12 @@ def build_analysis() -> dict:
             cotality_hvi = cotality.pull_hvi()
         except Exception:
             cotality_hvi = {}
+        # National macro / leading indicators (rates, unemployment, insolvencies, debt) —
+        # display-only cycle backdrop, never scored. Small files, hard-capped fetches.
+        try:
+            macro_signals = macro.build_macro()
+        except Exception:
+            macro_signals = {}
 
         # 5km supply-influx catchment (committed building approvals ÷ dwelling stock)
         centroids = abs_geo.fetch_sa2_centroids()
@@ -555,6 +561,7 @@ def build_analysis() -> dict:
             "projections": projections,
             "vg_medians": {"VIC": vg_vic, "NSW": vg_nsw},   # real named-suburb medians (lookup layer)
             "cotality": cotality_hvi,                       # capital-city HVI growth rates (display-only)
+            "macro": macro_signals,                         # national leading indicators (display-only)
             "suburbs": records,
         }, indent=1))
         finish_run(conn, run_id, len(records), 0, "ok",

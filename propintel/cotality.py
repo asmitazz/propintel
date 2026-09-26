@@ -50,7 +50,11 @@ def _city(row: dict) -> dict:
 def pull_hvi() -> dict:
     """Fetch the Cotality HVI. Returns {} on any failure (feed/format change, network)."""
     try:
-        d = cf.get(FEED, impersonate="chrome", timeout=25).json()
+        # Hard-capped fetch — a plain curl timeout was observed not to fire on a 0-byte hang,
+        # and this runs in the daily pipeline (see the 18-min hang incident in project memory).
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=1) as ex:
+            d = ex.submit(lambda: cf.get(FEED, impersonate="chrome", timeout=25).json()).result(timeout=35)
     except Exception:
         return {}
     monthly = d.get("monthly") or []

@@ -32,6 +32,7 @@ FEEDS = [
     ("RenewEconomy", "https://reneweconomy.com.au/feed/"),
     ("Sourceable", "https://sourceable.net/feed/"),
     ("realestate.com.au News", "https://www.realestate.com.au/news/feed/"),
+    ("RBA", "https://www.rba.gov.au/rss/rss-cb-media-releases.xml"),
 ]
 
 # an item is kept only if it looks property/infrastructure/jobs-relevant
@@ -40,7 +41,7 @@ RELEVANCE = re.compile(
     r"housing|dwelling|home build|rail|metro|highway|road|hospital|health|universit|campus|"
     r"defence|aukus|hydrogen|renewable|wind|solar|battery|energy zone|airport|port|precinct|"
     r"project|jobs|employ|migrat|population|suburb|property|price|rent|vacanc|development|stamp duty|"
-    r"first home|interest rate|construction)\b", re.I)
+    r"first home|interest rate|monetary polic|cash rate|reserve bank|construction)\b", re.I)
 
 # PM & Cabinet and Treasury are all-of-government feeds — they carry sport, foreign
 # affairs, ceremonies and arts alongside the occasional real housing/infra announcement.
