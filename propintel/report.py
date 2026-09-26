@@ -136,13 +136,18 @@ def _market_cell(s: dict) -> str:
         return '<span class="sub2">—</span>'
     if mk.get("r"):
         return '<span class="sub2" title="Rest-of-state — no free capital-city index; see the suburb\'s state trend">regional</span>'
-    y = mk.get("y")
+    y, m = mk.get("y"), mk.get("m")
     if y is None:
         return '<span class="sub2">—</span>'
     cls = "hit" if y > 0 else ("warn-flag" if y < 0 else "sub2")
-    return (f'<span class="{cls}" title="{mk["c"]} dwelling values are {y:+.1f}% over the last year '
-            f'(Cotality HVI) — this suburb sits in Greater {mk["c"]}. The ranking uses ABS fundamentals '
-            f'lagged ~1-3yr, so this is the current-market reality check.">{mk["c"]} {y:+.1f}%</span>')
+    # the 1-month direction is what catches a turning market the 12-month figure still hides
+    turning = m is not None and y != 0 and m != 0 and (m > 0) != (y > 0)
+    mo = f'<span class="sub2"> · {m:+.1f}% mo</span>' if m is not None else ''
+    flag = ('<span class="badge b-mid" title="Last month moved the opposite way to the 12-month trend — '
+            'the market may be turning">turning</span>') if turning else ''
+    return (f'<span class="{cls}" title="Greater {mk["c"]} dwelling values: {y:+.1f}% over 12 months, '
+            f'{m:+.1f}% last month (Cotality HVI). The rank uses ABS fundamentals lagged ~1-3yr — this is '
+            f'the current-market reality check.">{mk["c"]} {y:+.1f}%/yr{mo}</span>{(" " + flag) if flag else ""}')
 
 
 def _table(rows_html: str) -> str:
