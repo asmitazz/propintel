@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import json
 import math
+import statistics
 
 from . import abs_client, abs_geo, abs_region, cotality, id_forecast, macro, market_now, vg_prices
 from .config import ROOT
@@ -46,6 +47,16 @@ WEIGHTS = {
     "economic_health": 0.04,
     "liquidity": 0.05,
 }
+# Bump when the SCORING logic changes (not the data), so the daily digest can say "model
+# updated, ranks re-based" instead of falsely reporting "ABS data refreshed".
+MODEL_VERSION = "2026.09.2-supply-net"
+
+# Supply-adjusted demand: committed dwelling approvals net against the inflow signals, because
+# growth that new building absorbs isn't scarcity-demand (and approvals are a more reliable
+# leading indicator than population projections, which can change). Toggle off only for the
+# reproducibility self-check. See _supply_net.
+SUPPLY_NET = True
+
 MIN_POPULATION = 5000
 NOWCAST_HORIZON_YEARS = 2.5           # ABS price vintage ~2024 (FY) -> ~Aug 2026
 MARKET_YIELD_UPLIFT_PP = 1.4          # Census rent-paid -> ~market asking
@@ -125,9 +136,32 @@ def _asset_view(sm: dict, rent: float, inc: float | None) -> dict:
     }
 
 
+def _supply_influx(r: dict) -> float:
+    """Committed dwelling-approval influx (%/yr of stock) — the larger of the suburb's OWN
+    influx and its 5km catchment, so approvals sitting in a neighbouring SA2 still count."""
+    return max(r.get("dwelling_influx_pct") or 0.0, r.get("catchment_influx_pct") or 0.0)
+
+
+def _supply_adj_pg(r: dict, med_influx: float):
+    """Supply-adjusted population growth: subtract only the EXCESS committed approvals above
+    *normal* infill (the median over the scored set) from pop growth — growth that new building
+    will absorb isn't scarcity-demand. Ordinary- and low-build suburbs keep their raw growth;
+    only committed OVERSUPPLY is netted off. Approvals are a firmer leading indicator than
+    population projections (which can change), which is why supply nets the growth signal
+    directly. Migration and gentrification are left on raw inflow (netting one channel keeps
+    fundamentals leading and doesn't gut established suburbs). SUPPLY_NET off → raw pg (self-
+    check reproduces the stored scores)."""
+    pg = r.get("pop_growth_pa")
+    if pg is None or not SUPPLY_NET:
+        return pg
+    return pg - max(0.0, _supply_influx(r) - med_influx)
+
+
 def _score_asset(records: list[dict], asset: str) -> None:
     """Score + rank the suburbs eligible for one asset type, in place."""
     elig = [r for r in records if r.get(asset)]
+    infl = [_supply_influx(r) for r in elig]
+    med_influx = statistics.median(infl) if infl else 0.0   # "normal" infill for this set
     # gentrification potential = disadvantage (low SEIFA) × improvement momentum
     # (inflow + this asset's price growth). Rewards disadvantaged-but-RISING
     # suburbs; a disadvantaged suburb that's losing people scores ~0 (a trap).
@@ -144,7 +178,7 @@ def _score_asset(records: list[dict], asset: str) -> None:
         gentr[r["code"]] = dis * momentum
     sig = {
         "yield": {r["code"]: r[asset]["gross_yield"] for r in elig},
-        "population_growth": {r["code"]: r["pop_growth_pa"] for r in elig if r["pop_growth_pa"] is not None},
+        "population_growth": {r["code"]: _supply_adj_pg(r, med_influx) for r in elig if _supply_adj_pg(r, med_influx) is not None},
         "net_migration": {r["code"]: r["net_migration_per_1000"] for r in elig},
         "affordability": {r["code"]: -r[asset]["price_to_income"] for r in elig if r[asset]["price_to_income"] is not None},
         "gentrification": gentr,
@@ -586,6 +620,7 @@ def build_analysis() -> dict:
         ruled_out.sort(key=lambda r: max(r.get("suburb_influx_pct") or 0, r.get("catchment_influx_pct") or 0), reverse=True)
         OUTPUT.write_text(json.dumps({
             "generated": now_iso(), "count": len(records), "weights": WEIGHTS,
+            "model_version": MODEL_VERSION,
             "n_house": sum(1 for r in records if r.get("house")),
             "n_townhouse": sum(1 for r in records if r.get("townhouse")),
             "ruled_out_oversupply": ruled_out,

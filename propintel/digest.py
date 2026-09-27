@@ -65,7 +65,8 @@ def _ensure_prev() -> None:
             subs.append(rec)
         PREV.parent.mkdir(parents=True, exist_ok=True)
         PREV.write_text(json.dumps({"generated": sig.get("generated", ""), "suburbs": subs,
-                                    "macro_sig": sig.get("macro")}))
+                                    "macro_sig": sig.get("macro"),
+                                    "model_version": sig.get("model_version")}))
     except Exception:
         pass   # first deploy with the signature, or site not up yet — show baseline msg
 
@@ -106,15 +107,24 @@ def build_digest() -> str:
     added = [c for c in curr if c not in prev]
     removed = [c for c in prev if c not in curr]
 
-    if not changed_codes and not added and not removed:
+    # A scoring-MODEL change (ranks re-based on the same ABS data) must not be reported as an
+    # ABS data refresh. A live page from before the model_version key existed reads as changed.
+    curr_mv = json.loads(CURR.read_text()).get("model_version")
+    prev_mv = json.loads(PREV.read_text()).get("model_version") if PREV.exists() else None
+    model_changed = curr_mv != prev_mv
+
+    if not changed_codes and not added and not removed and not model_changed:
         prev_date = json.loads(PREV.read_text()).get("generated", "")[:10]
         return _write(today,
             f"**No material changes** since {prev_date}. ABS data hasn't been re-released, "
             f"so every ranking, score and price is unchanged. Report was refreshed and verified. "
             f"(ABS 'Data by Region' updates a few times a year — I'll flag the day it moves.)")
 
-    # Something moved — summarise it.
-    parts = ["**ABS data refreshed — here's what moved:**", ""]
+    # Something moved — summarise it. Distinguish a model change from an ABS refresh.
+    header = ("**Scoring model updated** — upcoming committed supply now nets against growth, "
+              "so ranks are re-based on the *same* ABS data (this isn't a new data release):"
+              if model_changed else "**ABS data refreshed — here's what moved:**")
+    parts = [header, ""]
     for asset, label in (("house", "houses"), ("townhouse", "townhouses/villas")):
         prev_top = [s["code"] for s in _topn(prev, asset)]
         curr_top = _topn(curr, asset)

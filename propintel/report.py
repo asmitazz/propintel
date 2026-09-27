@@ -1077,6 +1077,7 @@ def _lookup_data(recs: list[dict], live: dict) -> str:
             "hs": 1 if r.get("hotspot") else 0, "eb": r.get("econ_base"),
             "mig": r.get("net_migration_per_1000"), "pg": r.get("pop_growth_pa"),
             "pj": r.get("proj_pop_growth_10yr"), "sup": r.get("catchment_influx_pct"),
+            "sio": r.get("dwelling_influx_pct"),    # suburb's OWN dwelling-approval influx %/yr
             "i3": [f"{n} {p}%" for n, p in (r.get("top3_industries") or [])],
             "oo": r.get("owner_occupier_pct"),      # owner-occupier share % (2021)
             "od": r.get("owner_occupier_delta"),    # change in that share 2016->2021 (traction)
@@ -1122,7 +1123,10 @@ def build():
         key=lambda r: r.get("_pos", {}).get("house", r["house"]["rank"]))[:3]]
     # Compact change-signature embedded in the page so tomorrow's run can diff against
     # it (per code: name, state, house score+rank, townhouse score+rank, hotspot, gentrify).
-    sig = {"generated": data["generated"][:10], "s": {}}
+    # model_version lets tomorrow's digest tell a SCORING-model change (ranks re-based on the
+    # same ABS data) apart from an actual ABS data refresh. A live page from before this key
+    # existed has no model_version, which correctly reads as "model changed" once.
+    sig = {"generated": data["generated"][:10], "model_version": data.get("model_version"), "s": {}}
     for r in recs:
         h, t = r.get("house") or {}, r.get("townhouse") or {}
         sig["s"][r["code"]] = [r["name"], r["state"], h.get("score"), h.get("rank"),
@@ -1384,7 +1388,7 @@ details{{margin-top:10px}} summary{{cursor:pointer;color:var(--accent);font-size
   <p class="sub"><b>Fundamentals first, refreshed with the current market.</b> Every suburb is scored on the growth signals that move before price; the <b>#</b> is that same score with only its <b>yield</b> part recomputed on today's prices (rent ÷ current price) instead of 2024, at yield's own 15% weight. Fundamentals stay the driver — this is a tilt, not a takeover. ▲/▼ shows the move vs the pure-fundamentals rank; the tag names the price source. Pick a strategy, then a state.</p>
   <div class="banner" style="margin-bottom:14px"><b>The # is the fundamentals score with a current-yield refresh — still not a near-term price call.</b> The <b>Score</b> column is the pure structural rank (11 ABS signals, prices 2024 nowcast forward) and is <b>unchanged</b>. The <b>#</b> swaps the 2024 yield in that score for the <b>current</b> yield (rent ÷ today's price — the real VG sold price where we have it, else the ABS nowcast) — counted <b>once</b>, at yield's own 15% weight, so it can't dominate. It moves both ways: prices running ahead of rents drop a suburb (yield compresses), a price fall or rent rise lifts it. Rent is <b>current market rent</b> from state bond data (VIC, QLD, SA by suburb; NSW by LGA — coarser; ~57% of house rows) and Census-2021 + uplift elsewhere (WA/TAS/ACT/NT have no free rent feed) — so the yield still reads low where the rent is 2021; treat ✓/✗ as relative, and pair the # with <b>Market → Trends</b> and each card's <b>Market now / VG sold-price</b> lines for the current direction.</div>
   <details class="methoddrop"><summary>How the score works &amp; column key</summary>
-    <p class="m-detail" style="margin-top:8px">Composite score (0–100) per asset = yield 15 · <b>gentrification 12</b> · population growth 12 · net migration 10 · <b>ripple 10</b> · affordability 9 · industry diversity 9 · supply scarcity 8 · runway (not-already-run) 6 · economic health 4 · liquidity 5 — this is the <b>Score</b> column and is unchanged. The <b>#</b> is that same score with only its <b>yield</b> component re-scored on the <b>current</b> yield (rent ÷ today's price) instead of the 2024 one — normalised on the same curve and applied at yield's own 15% weight, so yield is counted once and can't dominate; it moves both ways. ▲/▼ = places moved, and the tag is the price source (<b>VG</b> exact sold-price match · <b>VG≈</b> composite-name component match · <b>est.</b> ABS nowcast, no VG match here). <b>Ripple</b> = % below similar-income neighbours within 10km. <b>Econ base</b> = industry mix. <b>SES</b> = socio-economic decile (1 = most disadvantaged): <span class="hit">▲ gentrifying</span> · <span class="warn-flag">▼ trap</span>. Houses = land play; townhouses/villas = lower entry, higher yield.</p>
+    <p class="m-detail" style="margin-top:8px">Composite score (0–100) per asset = yield 15 · <b>gentrification 12</b> · <b>supply-adjusted growth 12</b> (population growth <b>net of upcoming approvals</b> above normal infill — so growth new building will absorb isn't counted as demand) · net migration 10 · <b>ripple 10</b> · affordability 9 · industry diversity 9 · supply scarcity 8 · runway (not-already-run) 6 · economic health 4 · liquidity 5 — this is the <b>Score</b> column. The <b>#</b> is that same score with only its <b>yield</b> component re-scored on the <b>current</b> yield (rent ÷ today's price) instead of the 2024 one — normalised on the same curve and applied at yield's own 15% weight, so yield is counted once and can't dominate; it moves both ways. ▲/▼ = places moved, and the tag is the price source (<b>VG</b> exact sold-price match · <b>VG≈</b> composite-name component match · <b>est.</b> ABS nowcast, no VG match here). <b>Ripple</b> = % below similar-income neighbours within 10km. <b>Econ base</b> = industry mix. <b>SES</b> = socio-economic decile (1 = most disadvantaged): <span class="hit">▲ gentrifying</span> · <span class="warn-flag">▼ trap</span>. Houses = land play; townhouses/villas = lower entry, higher yield.</p>
   </details>
   <div class="strat-tabs">{stratnav}</div>
   {stratblocks}
@@ -1539,7 +1543,13 @@ function doLookup(q){{
       '<div><span>Net migration/1k:</span> '+(s.mig!=null?s.mig:'—')+'</div>'+
       '<div><span>Pop growth (recent):</span> '+(s.pg!=null?s.pg+'%/yr':'—')+'</div>'+
       '<div><span>Projected 10yr:</span> '+(s.pj!=null?'+'+s.pj+'% to 2034 (est)':'—')+'</div>'+
-      '<div><span>Supply 5km:</span> '+(s.sup!=null?s.sup+'%':'—')+'</div>'+
+      '<div style="grid-column:1/-1"><span>🏗️ Upcoming supply vs growth:</span> '+
+        ((s.sio!=null||s.sup!=null)?'committed approvals ~<b>'+(Math.max(s.sio||0,s.sup||0)).toFixed(1)+'%</b>/yr of stock'+
+          (s.pg!=null?' vs pop growth <b>'+s.pg+'%</b>/yr — '+
+            (Math.max(s.sio||0,s.sup||0) > (s.pg+0.3) ? '<b class="warn-flag">⚠ building faster than it\\'s growing: a supply headwind on further growth</b>'
+             : '<b class="hit">✓ demand outpacing new supply</b>'):'')
+          :'—')+
+        '<span class="sub2"> — the larger of the suburb\\'s own approvals and its 5km catchment; approvals are a firmer signal than population projections (which can change), so the score <b>nets the excess above normal infill off growth</b>. This is the "will new stock cap the growth?" check.</span></div>'+
       '<div><span>Economy:</span> '+(s.eb||'—')+'</div>'+
       '<div><span>Owner-occupiers:</span> '+(s.oo!=null? '<b>'+s.oo+'%</b> own'+
         (s.od!=null?' <span class="sub2">('+(s.od>0?'+':'')+s.od+'pp vs 2016'+(s.od>0?', owners moving in':(s.od<0?', investors gaining':''))+')</span>':'') : '—')+'</div>'+
