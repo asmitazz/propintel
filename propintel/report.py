@@ -143,7 +143,7 @@ def _market_cell(s: dict) -> str:
 def _table(rows_html: str) -> str:
     return f'''<div class="tablewrap"><table>
       <thead><tr>
-        <th class="num" title="Current-adjusted rank: the fundamentals rank after a penalty-only current-market adjustment (yield now, VG sold-price change, or metro direction). ▲/▼ = places moved vs the pure-fundamentals rank; the tag names the data source (VG / VG≈ component match / metro / no data).">#</th><th>Suburb (SA2)</th><th>St</th>
+        <th class="num" title="Current-adjusted rank: the fundamentals score with its yield component re-scored using the CURRENT yield (rent ÷ current price) instead of the 2024 yield, at yield's own 15% model weight. ▲/▼ = places moved vs the pure-fundamentals rank; the tag names the price source (VG exact · VG≈ component match · est. ABS nowcast).">#</th><th>Suburb (SA2)</th><th>St</th>
         <th class="num" title="% below similar-income neighbours within 10km (ripple/arbitrage upside)">Ripple</th><th class="num">Pop g/yr</th><th class="num">Net mig /1k</th>
         <th class="num" title="Dwelling-approval influx within 5km as % of stock (rule-out >8%)">Supply 5km</th>
         <th class="num" title="Socio-economic decile (1=most disadvantaged). ▲ gentrifying · ▼ trap">SES</th>
@@ -169,9 +169,9 @@ def _strategy_block(records: list[dict], asset: str, label: str, active: bool) -
     for key, lbl in tabs:
         if key == "overview":
             rows = elig[:15]
-            note = (f'Top 15 {noun} nationwide, ranked on the growth fundamentals then <b>adjusted for the current market</b> '
-                    f'(a penalty where yield-now fails 4.5%, VG sold prices are cooling, or the metro is falling — never a reward for a rise). '
-                    f'▲/▼ shows the move vs the pure-fundamentals rank; the tag is the data source. {len(elig)} suburbs have a {asset} market.')
+            note = (f'Top 15 {noun} nationwide, ranked on the growth <b>fundamentals</b> — with just the yield part re-scored on '
+                    f'<b>current</b> prices (rent ÷ today\'s price) instead of 2024, at yield\'s own 15% weight. Fundamentals stay the driver; '
+                    f'▲/▼ shows the tilt vs the pure-fundamentals rank and the tag is the price source. {len(elig)} suburbs have a {asset} market.')
         else:
             in_state = [r for r in elig if r["state"] == key]
             rows = in_state[:15]
@@ -810,6 +810,7 @@ def _load_live_prices() -> dict:
 
 # --- Current-market re-rank (display-only: score & rank are never touched) --------
 _VG_CACHE = None
+_ANALYSIS_WEIGHTS = None   # {signal: weight} from analyze.py, loaded in build()
 # bare compass words carry no locality on their own — skip them when matching parts
 _DIRWORDS = {"north", "south", "east", "west", "central", "upper", "lower", "greater", "the"}
 
@@ -855,87 +856,108 @@ def _vg_read(r: dict):
     return None, None, None, None
 
 
+def _pct(values: dict) -> dict:
+    """Rank-percentile in [0,1] — copied verbatim from analyze._score_asset so the current
+    yield normalises on the SAME curve the fundamentals score used for the 2024 yield."""
+    if not values:
+        return {}
+    order = sorted(values.items(), key=lambda kv: kv[1])
+    n = len(order)
+    return {k: (i / (n - 1) if n > 1 else 1.0) for i, (k, _) in enumerate(order)}
+
+
+def _cur_price(r: dict, asset: str, hy):
+    """Current price for an asset block + its source. VG-implied (price_2024 × (1+h_yoy),
+    tag VG/VG≈) where a sold-price change is available, else the ABS nowcast (tag 'est.')."""
+    a = r.get(asset)
+    if not a:
+        return None, None
+    if hy is not None and a.get("price_2024"):
+        return a["price_2024"] * (1 + hy / 100), "vg"
+    if a.get("price_now"):
+        return a["price_now"], "est."
+    return None, None
+
+
 def _yield_now_asset(r: dict, asset: str, hy, asof, src):
-    """Current, price-adjusted market yield for one asset block. The price side is made
-    current; rent stays Census-2021 + market uplift, so ONLY price is current. Where a VG
-    sold-price change is available (houses) the current price is price_2024 × (1 + h_yoy),
-    tagged VG / VG≈; otherwise it falls back to the ABS nowcast (price_now), tagged 'est.'.
-    Universal across states and both assets, so no state is silently exempt from the gate.
-    Returns [yield_now_pct, gate(0/1), asof_or_None, source] or None."""
+    """Current MARKET yield for one asset block, for DISPLAY (the ✓/✗ vs the 4.5% target).
+    rent×52 ÷ current price + the market-vs-Census uplift. Price is current (VG or nowcast);
+    rent is still Census-2021 + uplift. Returns [pct, gate(0/1), asof_or_None, source]."""
     a = r.get(asset)
     rent = r.get("median_weekly_rent")
-    if not a or not rent:
+    cur, psrc = _cur_price(r, asset, hy)
+    if not a or not rent or cur is None or cur <= 0:
         return None
-    if hy is not None and a.get("price_2024"):
-        cur, ysrc, yasof = a["price_2024"] * (1 + hy / 100), src, asof
-    elif a.get("price_now"):
-        cur, ysrc, yasof = a["price_now"], "est.", None
-    else:
-        return None
-    if cur <= 0:
-        return None
-    uplift = a["market_yield"] - a["gross_yield"]           # market-vs-census rent premium (pp)
+    ysrc = src if (psrc == "vg" and src) else "est."
+    uplift = a["market_yield"] - a["gross_yield"]
     y = rent * 52 / cur * 100 + uplift
-    return [round(y, 2), 1 if y >= 4.5 else 0, yasof, ysrc]
+    return [round(y, 2), 1 if y >= 4.5 else 0, (asof if psrc == "vg" else None), ysrc]
 
 
-def _asset_adj(r: dict, asset: str):
-    """Penalty-only current-market adjustment for ONE asset block (never rewards a rise).
-    Dominant lever — yield now vs the 4.5% target — is CONTINUOUS: −min(6, 6 × shortfall pp),
-    so a suburb just under the line is barely touched and a deeply-compressed one is capped
-    at −6. Rent is 2021 so yields read low everywhere; the continuous form keeps the order
-    from being decided by noise at the line. Small secondary direction lever: VG cooling
-    (houses) or, where there's no VG, the metro capital falling (kept ≤2 — one number for a
-    whole city can't tell suburbs apart). Returns dict or None (no asset block)."""
+def _gross_now(r: dict, asset: str, hy):
+    """Current GROSS yield (no uplift) — the exact basis analyze.py normalises for the yield
+    score signal, so it can be swapped in at the model's own yield weight. Falls back to the
+    stored 2024 gross_yield where no current price exists (→ zero adjustment for that row)."""
+    a = r.get(asset)
+    rent = r.get("median_weekly_rent")
+    cur, _ = _cur_price(r, asset, hy)
+    if not a:
+        return None
+    if not rent or cur is None or cur <= 0:
+        return a.get("gross_yield")
+    return rent * 52 / cur * 100
+
+
+def _asset_meta(r: dict, asset: str):
+    """Per-asset current-market read (no adjustment yet — that needs the cross-suburb norm).
+    Houses use the VG sold-price change where available; townhouses skip VG (VIC unit YoY is
+    noisy) and use the ABS nowcast. Returns dict or None (no asset block)."""
     a = r.get(asset)
     if not a:
         return None
     hy = asof = src = via = None
-    if asset == "house":                       # townhouses skip VG (VIC unit YoY is noisy) → est.
+    if asset == "house":
         hy, asof, src, via = _vg_read(r)
     yn = _yield_now_asset(r, asset, hy, asof, src)
-    adj = 0.0
-    why = []
-    if yn is not None:
-        short = 4.5 - yn[0]
-        if short > 0:
-            adj -= min(6.0, 6.0 * short)
-            why.append(f"yield now ~{yn[0]}% ({yn[3]}) is below the 4.5% target")
-    if hy is not None:
-        if hy <= -5:
-            adj -= 2; why.append(f"VG sold prices {hy}% (falling)")
-        elif hy < 0:
-            adj -= 1; why.append(f"VG sold prices {hy}% (cooling)")
-        dtag = src + (f" · {via}" if via else "")
-    else:
-        mk = r.get("mkt") or {}
-        y = mk.get("y")
-        if not mk.get("r") and y is not None:
-            if y <= -4:
-                adj -= 2; why.append(f"{mk.get('c')} {y:+.1f}%/yr (metro falling)")
-            elif y < 0:
-                adj -= 1; why.append(f"{mk.get('c')} {y:+.1f}%/yr (metro soft)")
-            dtag = "metro"
-        else:
-            dtag = None
-    tag = (yn[3] if yn else None) or dtag or "n/a"
-    return {"adj": round(adj, 1), "yn": yn, "tag": tag, "src": (yn[3] if yn else None),
-            "why": "; ".join(why) if why else "current market steady"}
+    tag = (yn[3] if yn else None) or "n/a"
+    return {"hy": hy, "yn": yn, "gross_now": _gross_now(r, asset, hy), "tag": tag}
 
 
 def _apply_rerank(recs: list[dict]) -> None:
-    """Attach the current-adjusted position for every suburb, PER ASSET, to each record for
-    the display layer. Leaves score and rank untouched, so the embedded change-signature —
-    and the daily digest that reads it — stay byte-identical. Yield-now is universal (VG
-    where available, else ABS nowcast), so no state is exempt; nothing is imputed."""
+    """Current-market re-rank, PER ASSET, attached to each record for the display layer.
+    The fundamentals score stays the dominant signal: the ONLY adjustment is to re-score the
+    yield component with the CURRENT yield instead of the 2024 one, at yield's own model
+    weight — adj = 100 · w_yield · (pct(gross_now) − pct(gross_2024)). It moves both ways
+    (rents up / prices soft lifts a suburb; prices run ahead of rents drops it), is bounded by
+    the weight (±100·w_yield), and counts yield exactly ONCE (no double penalty). Score and
+    rank are untouched, so the embedded change-signature — and the daily digest — stay
+    byte-identical."""
+    w_yield = float((_ANALYSIS_WEIGHTS or {}).get("yield", 0.15))
     for r in recs:
         r["_a"] = {}
         for asset in ("house", "townhouse"):
-            d = _asset_adj(r, asset)
-            if d:
-                r["_a"][asset] = d
+            m = _asset_meta(r, asset)
+            if m:
+                r["_a"][asset] = m
     for asset in ("house", "townhouse"):
         el = [r for r in recs if r.get(asset) and asset in r["_a"]]
+        gross_now = {r["code"]: r["_a"][asset]["gross_now"] for r in el if r["_a"][asset]["gross_now"] is not None}
+        gross_2024 = {r["code"]: r[asset]["gross_yield"] for r in el if r[asset].get("gross_yield") is not None}
+        pn, p0 = _pct(gross_now), _pct(gross_2024)
+        for r in el:
+            m = r["_a"][asset]
+            nn, n0 = pn.get(r["code"]), p0.get(r["code"])
+            adj = 100.0 * w_yield * (nn - n0) if (nn is not None and n0 is not None) else 0.0
+            m["adj"] = round(adj, 2)
+            yn = m["yn"]
+            if yn and abs(adj) >= 0.05:
+                dirn = "lifts" if adj > 0 else "drops"
+                m["why"] = (f"current yield ~{yn[0]}% ({yn[3]}) {dirn} this vs its 2024 yield "
+                            f"→ {adj:+.1f} on the score (yield counted once, at its {w_yield:.0%} weight)")
+            elif yn:
+                m["why"] = f"current yield ~{yn[0]}% ({yn[3]}) ≈ its 2024 yield — no change"
+            else:
+                m["why"] = "no current price for this asset — unchanged"
         el.sort(key=lambda r: -(r[asset]["score"] + r["_a"][asset]["adj"]))
         for i, r in enumerate(el, 1):
             r.setdefault("_pos", {})[asset] = i
@@ -1005,8 +1027,10 @@ def _lookup_data(recs: list[dict], live: dict) -> str:
 
 
 def build():
+    global _ANALYSIS_WEIGHTS
     data = json.loads(ANALYSIS.read_text())
     recs = data["suburbs"]
+    _ANALYSIS_WEIGHTS = data.get("weights") or {}
     live = _load_live_prices()
     _apply_rerank(recs)   # current-market re-rank (display-only; score & rank untouched)
     strat_nav = "".join(
@@ -1284,10 +1308,10 @@ details{{margin-top:10px}} summary{{cursor:pointer;color:var(--accent);font-size
 
   <div class="page" id="page-shortlist">
   <h2>Shortlist by strategy &amp; state</h2>
-  <p class="sub"><b>Fundamentals rank, adjusted for the current market.</b> Every suburb is scored on the growth signals that move before price, then the <b>#</b> is nudged down where today's data disagrees — yield now below your 4.5% target, VG sold prices cooling, or the capital falling. ▲/▼ shows the move vs the pure-fundamentals rank; the tag names the source. Pick a strategy, then a state.</p>
-  <div class="banner" style="margin-bottom:14px"><b>The # now blends fundamentals with the current market — but it's still not a near-term price call.</b> The <b>score</b> column is the pure structural rank (ABS fundamentals, prices 2024 nowcast forward). The <b>#</b> re-orders that by a penalty-only current adjustment: <b>yield now</b> (rent ÷ the current price — VG sold price where we have it, else the ABS nowcast) vs your 4.5% target, plus VG sold-price direction or the metro trend. It never rewards a rise, so a suburb whose prices already ran gets marked down for the yield that compression leaves. Rents are still 2021, so yields read low across the board — read ✓/✗ as relative, and pair it with <b>Market → Trends</b> and <b>Macro signals</b>.</div>
+  <p class="sub"><b>Fundamentals first, refreshed with the current market.</b> Every suburb is scored on the growth signals that move before price; the <b>#</b> is that same score with only its <b>yield</b> part recomputed on today's prices (rent ÷ current price) instead of 2024, at yield's own 15% weight. Fundamentals stay the driver — this is a tilt, not a takeover. ▲/▼ shows the move vs the pure-fundamentals rank; the tag names the price source. Pick a strategy, then a state.</p>
+  <div class="banner" style="margin-bottom:14px"><b>The # is the fundamentals score with a current-yield refresh — still not a near-term price call.</b> The <b>Score</b> column is the pure structural rank (11 ABS signals, prices 2024 nowcast forward) and is <b>unchanged</b>. The <b>#</b> swaps the 2024 yield in that score for the <b>current</b> yield (rent ÷ today's price — the real VG sold price where we have it, else the ABS nowcast) — counted <b>once</b>, at yield's own 15% weight, so it can't dominate. It moves both ways: prices running ahead of rents drop a suburb (yield compresses), a price fall or rent rise lifts it. Rents are still Census-2021, so the yield levels read low across the board — treat ✓/✗ as relative, and pair the # with <b>Market → Trends</b> and each card's <b>Market now / VG sold-price</b> lines for the current direction.</div>
   <details class="methoddrop"><summary>How the score works &amp; column key</summary>
-    <p class="m-detail" style="margin-top:8px">Composite score (0–100) per asset = yield 15 · <b>gentrification 12</b> · population growth 12 · net migration 10 · <b>ripple 10</b> · affordability 9 · industry diversity 9 · supply scarcity 8 · runway (not-already-run) 6 · economic health 4 · liquidity 5 — this is the <b>Score</b> column and is unchanged. The <b>#</b> is that score re-ordered by the current-market adjustment (yield now vs 4.5%, VG sold-price direction, metro trend); ▲/▼ = places moved, and the tag is the source (<b>VG</b> exact sold-price match · <b>VG≈</b> composite-name component match · <b>est.</b> ABS nowcast price, no VG match here · <b>metro</b> capital direction). <b>Ripple</b> = % below similar-income neighbours within 10km. <b>Econ base</b> = industry mix. <b>SES</b> = socio-economic decile (1 = most disadvantaged): <span class="hit">▲ gentrifying</span> · <span class="warn-flag">▼ trap</span>. Houses = land play; townhouses/villas = lower entry, higher yield.</p>
+    <p class="m-detail" style="margin-top:8px">Composite score (0–100) per asset = yield 15 · <b>gentrification 12</b> · population growth 12 · net migration 10 · <b>ripple 10</b> · affordability 9 · industry diversity 9 · supply scarcity 8 · runway (not-already-run) 6 · economic health 4 · liquidity 5 — this is the <b>Score</b> column and is unchanged. The <b>#</b> is that same score with only its <b>yield</b> component re-scored on the <b>current</b> yield (rent ÷ today's price) instead of the 2024 one — normalised on the same curve and applied at yield's own 15% weight, so yield is counted once and can't dominate; it moves both ways. ▲/▼ = places moved, and the tag is the price source (<b>VG</b> exact sold-price match · <b>VG≈</b> composite-name component match · <b>est.</b> ABS nowcast, no VG match here). <b>Ripple</b> = % below similar-income neighbours within 10km. <b>Econ base</b> = industry mix. <b>SES</b> = socio-economic decile (1 = most disadvantaged): <span class="hit">▲ gentrifying</span> · <span class="warn-flag">▼ trap</span>. Houses = land play; townhouses/villas = lower entry, higher yield.</p>
   </details>
   <div class="strat-tabs">{stratnav}</div>
   {stratblocks}
