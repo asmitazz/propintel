@@ -219,10 +219,82 @@ def pull_sa_rents() -> dict[str, dict]:
     return out
 
 
-def build_rents() -> dict[str, dict]:
-    """Merge every implemented state into one cache. Currently: VIC, QLD, SA."""
+_NSW_LIST = ("https://dcj.nsw.gov.au/about-us/families-and-communities-statistics/"
+             "housing-rent-and-sales/previous-rent-and-sales-reports.html")
+_NSW_DAM = "https://dcj.nsw.gov.au"
+_LGA_SUFFIX = re.compile(r"\b(regional|council|city|shire|municipal(?:ity)?|area|the council of)\b", re.I)
+
+
+def norm_lga(name: str) -> str:
+    """Normalise an LGA name so DCJ's names match the sa2_lga names (drop '(NSW)', a trailing
+    'Regional'/'Council'/'City'/'Shire', punctuation) — shared by rents.py and report.py."""
+    s = re.sub(r"\([^)]*\)", "", name or "")
+    s = _LGA_SUFFIX.sub("", s)
+    s = re.sub(r"[^a-z0-9 ]", "", s.lower())
+    return re.sub(r"\s+", " ", s).strip().upper()
+
+
+def _nsw_latest_url() -> str | None:
+    """Newest LGA rent-tables .xlsx URL from the DCJ previous-reports listing."""
+    html = cf.get(_NSW_LIST, impersonate="chrome", timeout=40).text
+    hrefs = re.findall(r'href="([^"]*rent-tables-[a-z]+-20\d\d-quarter\.xlsx)"', html, re.I)
+    if not hrefs:
+        return None
+    q = {"march": 1, "june": 2, "september": 3, "december": 4}
+
+    def key(u):
+        m = re.search(r"rent-tables-([a-z]+)-(20\d\d)-quarter", u, re.I)
+        return (int(m.group(2)), q.get(m.group(1).lower(), 0)) if m else (0, 0)
+    best = max(hrefs, key=key)
+    return best if best.startswith("http") else _NSW_DAM + best
+
+
+def pull_nsw_rents() -> dict[str, dict]:
+    """NSW current market rent by LGA (DCJ Rent & Sales, bond lodgements). LGA-level only —
+    coarser than the suburb feeds — keyed 'NSW_LGA|<normalised LGA>'; report.py maps each NSW
+    suburb to its LGA via sa2_lga.json. house = House/Total median, unit = Townhouse/Total
+    (fallback Flat/Unit/Total). Weekly $."""
+    url = _nsw_latest_url()
+    if not url:
+        return {}
+    import openpyxl
+    content = cf.get(url, impersonate="chrome", timeout=90).content
+    wb = openpyxl.load_workbook(io.BytesIO(content), read_only=True, data_only=True)
+    ws = wb["LGA"]
+    m = re.search(r"rent-tables-([a-z]+)-(20\d\d)", url, re.I)
+    asof = f"{m.group(1).title()} {m.group(2)}" if m else "latest"
+    house, town, flat = {}, {}, {}
+    for row in ws.iter_rows(min_row=9, values_only=True):
+        if len(row) <= 7 or not row[3]:
+            continue
+        lga = norm_lga(str(row[3]))
+        dwell, beds, med = str(row[4] or ""), str(row[5] or ""), _num(row[7])
+        if med is None or beds != "Total":
+            continue
+        if dwell == "House":
+            house[lga] = med
+        elif dwell == "Townhouse":
+            town[lga] = med
+        elif dwell == "Flat/Unit":
+            flat[lga] = med
     out: dict[str, dict] = {}
-    for name, fn in (("VIC", pull_vic_rents), ("QLD", pull_qld_rents), ("SA", pull_sa_rents)):
+    for lga in set(house) | set(town) | set(flat):
+        rec = {"asof": asof}
+        if lga in house:
+            rec["h"] = house[lga]
+        u = town.get(lga) or flat.get(lga)
+        if u:
+            rec["u"] = u
+        if "h" in rec or "u" in rec:
+            out[f"NSW_LGA|{lga}"] = rec
+    return out
+
+
+def build_rents() -> dict[str, dict]:
+    """Merge every implemented state into one cache. VIC/QLD/SA by suburb; NSW by LGA."""
+    out: dict[str, dict] = {}
+    for name, fn in (("VIC", pull_vic_rents), ("QLD", pull_qld_rents),
+                     ("SA", pull_sa_rents), ("NSW", pull_nsw_rents)):
         try:
             got = fn()
             print(f"  [{name}] rent suburbs: {len(got)}")

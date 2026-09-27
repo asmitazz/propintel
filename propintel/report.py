@@ -826,6 +826,8 @@ def _vg_cache() -> dict:
 
 
 _RENTS_CACHE = None
+_SA2LGA = None
+_LGA_SUFFIX = re.compile(r"\b(regional|council|city|shire|municipal(?:ity)?|area|the council of)\b", re.I)
 
 
 def _rents_cache() -> dict:
@@ -838,15 +840,41 @@ def _rents_cache() -> dict:
     return _RENTS_CACHE
 
 
+def _sa2lga() -> dict:
+    global _SA2LGA
+    if _SA2LGA is None:
+        try:
+            _SA2LGA = json.loads((ROOT / "data" / "sa2_lga.json").read_text())
+        except Exception:
+            _SA2LGA = {}
+    return _SA2LGA
+
+
+def _norm_lga(name: str) -> str:
+    """Match rents.norm_lga exactly, so NSW DCJ LGA names line up with sa2_lga names."""
+    s = re.sub(r"\([^)]*\)", "", name or "")
+    s = _LGA_SUFFIX.sub("", s)
+    s = re.sub(r"[^a-z0-9 ]", "", s.lower())
+    return re.sub(r"\s+", " ", s).strip().upper()
+
+
 def _rent_read(r: dict, asset: str):
-    """Current market rent (weekly $) for an asset from the state bond-data cache, matched
-    by exact name then by composite-name component (same rule as _vg_read). Returns
-    (rent, asof, via) or (None, None, None). key 'h' = house, 'u' = unit/townhouse."""
+    """Current market rent (weekly $) for an asset from the state bond-data cache. VIC/QLD/SA
+    match by exact suburb name then composite-name component; NSW has no free suburb feed, so
+    it maps the suburb → its LGA (via sa2_lga.json) and reads the LGA median (coarser).
+    Returns (rent, asof, via) or (None, None, None). key 'h' = house, 'u' = unit/townhouse."""
     cache = _rents_cache()
     if not cache:
         return None, None, None
     st = r["state"]
     fld = "h" if asset == "house" else "u"
+    if st == "NSW":
+        lga = (_sa2lga().get(r.get("code")) or {}).get("lga")
+        if lga:
+            e = cache.get(f"NSW_LGA|{_norm_lga(lga)}")
+            if e and e.get(fld):
+                return e[fld], e.get("asof"), f"{lga} LGA"
+        return None, None, None
     direct = cache.get(f"{st}|{r['name'].split(' - ')[0].strip().upper()}")
     if direct and direct.get(fld):
         return direct[fld], direct.get("asof"), None
@@ -1354,7 +1382,7 @@ details{{margin-top:10px}} summary{{cursor:pointer;color:var(--accent);font-size
   <div class="page" id="page-shortlist">
   <h2>Shortlist by strategy &amp; state</h2>
   <p class="sub"><b>Fundamentals first, refreshed with the current market.</b> Every suburb is scored on the growth signals that move before price; the <b>#</b> is that same score with only its <b>yield</b> part recomputed on today's prices (rent ÷ current price) instead of 2024, at yield's own 15% weight. Fundamentals stay the driver — this is a tilt, not a takeover. ▲/▼ shows the move vs the pure-fundamentals rank; the tag names the price source. Pick a strategy, then a state.</p>
-  <div class="banner" style="margin-bottom:14px"><b>The # is the fundamentals score with a current-yield refresh — still not a near-term price call.</b> The <b>Score</b> column is the pure structural rank (11 ABS signals, prices 2024 nowcast forward) and is <b>unchanged</b>. The <b>#</b> swaps the 2024 yield in that score for the <b>current</b> yield (rent ÷ today's price — the real VG sold price where we have it, else the ABS nowcast) — counted <b>once</b>, at yield's own 15% weight, so it can't dominate. It moves both ways: prices running ahead of rents drop a suburb (yield compresses), a price fall or rent rise lifts it. Rent is <b>current market rent</b> from state bond data where we have it (VIC now; more states rolling in) and Census-2021 + uplift elsewhere — so the yield levels still read low where the rent is 2021; treat ✓/✗ as relative, and pair the # with <b>Market → Trends</b> and each card's <b>Market now / VG sold-price</b> lines for the current direction.</div>
+  <div class="banner" style="margin-bottom:14px"><b>The # is the fundamentals score with a current-yield refresh — still not a near-term price call.</b> The <b>Score</b> column is the pure structural rank (11 ABS signals, prices 2024 nowcast forward) and is <b>unchanged</b>. The <b>#</b> swaps the 2024 yield in that score for the <b>current</b> yield (rent ÷ today's price — the real VG sold price where we have it, else the ABS nowcast) — counted <b>once</b>, at yield's own 15% weight, so it can't dominate. It moves both ways: prices running ahead of rents drop a suburb (yield compresses), a price fall or rent rise lifts it. Rent is <b>current market rent</b> from state bond data (VIC, QLD, SA by suburb; NSW by LGA — coarser; ~57% of house rows) and Census-2021 + uplift elsewhere (WA/TAS/ACT/NT have no free rent feed) — so the yield still reads low where the rent is 2021; treat ✓/✗ as relative, and pair the # with <b>Market → Trends</b> and each card's <b>Market now / VG sold-price</b> lines for the current direction.</div>
   <details class="methoddrop"><summary>How the score works &amp; column key</summary>
     <p class="m-detail" style="margin-top:8px">Composite score (0–100) per asset = yield 15 · <b>gentrification 12</b> · population growth 12 · net migration 10 · <b>ripple 10</b> · affordability 9 · industry diversity 9 · supply scarcity 8 · runway (not-already-run) 6 · economic health 4 · liquidity 5 — this is the <b>Score</b> column and is unchanged. The <b>#</b> is that same score with only its <b>yield</b> component re-scored on the <b>current</b> yield (rent ÷ today's price) instead of the 2024 one — normalised on the same curve and applied at yield's own 15% weight, so yield is counted once and can't dominate; it moves both ways. ▲/▼ = places moved, and the tag is the price source (<b>VG</b> exact sold-price match · <b>VG≈</b> composite-name component match · <b>est.</b> ABS nowcast, no VG match here). <b>Ripple</b> = % below similar-income neighbours within 10km. <b>Econ base</b> = industry mix. <b>SES</b> = socio-economic decile (1 = most disadvantaged): <span class="hit">▲ gentrifying</span> · <span class="warn-flag">▼ trap</span>. Houses = land play; townhouses/villas = lower entry, higher yield.</p>
   </details>
