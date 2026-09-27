@@ -952,35 +952,55 @@ def _cur_price(r: dict, asset: str, hy):
     return None, None
 
 
-def _market_now(r: dict, asset: str, hy):
-    """Current MARKET yield for an asset on ONE consistent basis: current price (VG-implied or
-    ABS nowcast) with the current rent — bond rent as-is (already market), or Census rent plus
-    the market uplift. Returns (yield_pct, price_src, rent_src, rent_asof) or (None,…)."""
+def _yield_calc(r: dict, asset: str, hy):
+    """Market yield on a VINTAGE-CONSISTENT basis, shared by the display and the re-rank so
+    they always agree. Where the rent is current bond data, it pairs with the current price
+    (both current — a real 'yield now'). Where the rent is Census-2021 (no feed), it pairs with
+    the 2024 price (matched vintage = the stored structural yield), so no state is shown — or
+    ranked on — a stale-rent-÷-current-price figure that reads artificially low.
+    Returns (yield_pct, price_src, rent_src, rent_asof) or (None, …). price_src ∈ {vg, est., 2024}."""
     a = r.get(asset)
-    cur, psrc = _cur_price(r, asset, hy)
     rent, rsrc, rasof = _rent_now(r, asset)
-    if not a or cur is None or cur <= 0 or not rent:
+    if not a or not rent:
         return None, None, None, None
-    uplift = 0.0 if rsrc == "bond" else (a["market_yield"] - a["gross_yield"])
+    if rsrc == "bond":
+        cur, psrc = _cur_price(r, asset, hy)
+        uplift = 0.0
+    else:
+        cur, psrc = a.get("price_2024"), "2024"
+        uplift = a["market_yield"] - a["gross_yield"]
+    if not cur or cur <= 0:
+        return None, None, None, None
     return rent * 52 / cur * 100 + uplift, psrc, rsrc, rasof
 
 
 def _yield_now_asset(r: dict, asset: str, hy, asof, src):
-    """DISPLAY current market yield (the ✓/✗ vs the 4.5% target). Price is current (VG or
-    nowcast); rent is current bond rent where matched, else Census-2021 + uplift.
-    Returns [pct, gate(0/1), price_asof, price_src, rent_src, rent_asof] or None."""
-    y, psrc, rsrc, rasof = _market_now(r, asset, hy)
+    """DISPLAY yield vs the 4.5% target, on the same vintage-consistent basis as the re-rank.
+    Returns [pct, gate(0/1), price_asof, price_src, rent_src, rent_asof] or None. price_src is
+    'VG'/'VG≈' (current, sold-price), 'est.' (current, ABS nowcast) or '2024' (structural, no
+    current feed)."""
+    y, psrc, rsrc, rasof = _yield_calc(r, asset, hy)
     if y is None:
         return None
-    ysrc = src if (psrc == "vg" and src) else "est."
+    ysrc = (src or "VG") if psrc == "vg" else psrc
     return [round(y, 2), 1 if y >= 4.5 else 0, (asof if psrc == "vg" else None), ysrc, rsrc, rasof]
+
+
+def _rank_yield(r: dict, asset: str, hy):
+    """Yield used for the RE-RANK — the same vintage-consistent figure as the display. It only
+    tilts where both rent and price are current (bond states); Census-rent states pair 2021
+    rent with the 2024 price → equals the stored market_yield → ZERO tilt, so fast-price states
+    like WA aren't unfairly demoted (WA fell ~98 ranks before this)."""
+    return _yield_calc(r, asset, hy)[0]
 
 
 def _asset_meta(r: dict, asset: str):
     """Per-asset current-market read (no adjustment yet — that needs the cross-suburb norm).
     Houses use the VG sold-price change where available; townhouses skip VG (VIC unit YoY is
-    noisy) and use the ABS nowcast. `market_now` is the current market yield for the re-rank;
-    the 2024 baseline it's compared against is the stored market_yield (same market basis)."""
+    noisy) and use the ABS nowcast. `market_now` is the yield the re-rank normalises against
+    the stored 2024 market_yield; it only tilts where both rent and price are current, so
+    no-current-rent states aren't penalised for a price/rent vintage mismatch. `yn` is the
+    DISPLAY yield (current price, honestly labelled when the rent is still Census)."""
     a = r.get(asset)
     if not a:
         return None
@@ -988,7 +1008,7 @@ def _asset_meta(r: dict, asset: str):
     if asset == "house":
         hy, asof, src, via = _vg_read(r)
     yn = _yield_now_asset(r, asset, hy, asof, src)
-    mnow, _, _, _ = _market_now(r, asset, hy)
+    mnow = _rank_yield(r, asset, hy)
     tag = (yn[3] if yn else None) or "n/a"
     return {"hy": hy, "yn": yn, "market_now": mnow, "tag": tag}
 
@@ -1053,7 +1073,8 @@ def _pos_cell(s: dict, asset: str) -> str:
     else:
         mv = f'<span class="sub2" title="{why}">–</span>'
     tag = ad.get("tag", "")
-    lbl = "VG≈" if tag.startswith("VG≈") else "VG" if tag.startswith("VG") else tag
+    lbl = ("VG≈" if tag.startswith("VG≈") else "VG" if tag.startswith("VG")
+           else "no feed" if tag == "2024" else tag)
     return f'{pos} {mv} <span class="sub2" style="font-size:11px" title="{why}">{lbl}</span>'
 
 
@@ -1583,15 +1604,16 @@ function doLookup(q){{
       (s.vgc&&s.vgc.vol?'<div style="grid-column:1/-1"><span>🏠 Buyer activity (where people are buying):</span> <b>'+s.vgc.vol.toLocaleString()+'</b> sales in the last 12mo'+
         (s.vgc.vol_chg!=null?' <b class="'+(s.vgc.vol_chg>0?'hit':(s.vgc.vol_chg<0?'warn-flag':''))+'">('+(s.vgc.vol_chg>0?'+':'')+s.vgc.vol_chg+'% vs prior yr)</b>':'')+
         '<span class="sub2"> — actual transaction volume from the NSW land registry; rising = more buyers active here.</span></div>':'')+
-      (s.yn?'<div style="grid-column:1/-1"><span>💰 Yield now (price + rent adjusted):</span> '+
+      (s.yn?'<div style="grid-column:1/-1"><span>💰 '+(s.yn[3]==='2024'?'Yield (structural)':'Yield now (price + rent adjusted)')+':</span> '+
         '<b>house</b> <b class="'+(s.yn[1]?'hit':'warn-flag')+'">~'+s.yn[0]+'% '+(s.yn[1]?'✓':'✗')+'</b>'+
         (s.ynt?' · <b>townhouse</b> <b class="'+(s.ynt[1]?'hit':'warn-flag')+'">~'+s.ynt[0]+'% '+(s.ynt[1]?'✓':'✗')+'</b>':'')+
         ' <span class="sub2">vs your 4.5% target</span>'+
-        '<span class="sub2"> — rent ÷ the <b>current</b> price ('+
-        (s.yn[3]==='est.'?'ABS nowcast — no VG sold-price match here':((s.yn[3]==='VG≈'?'VG component match':'VG sold')+(s.yn[2]?' · '+s.yn[2]:'')))+
-        '), rent = '+
-        (s.yn[4]==='bond'?'<b class="hit">current market rent</b>'+(s.yn[5]?' ('+s.yn[5]+', state bond data)':''):'Census-2021 + market uplift (no current-rent feed for this state yet)')+
-        '. '+(s.yn[4]==='bond'?'Both sides current.':'Only price is current — the 2021 rent reads low, so treat ✓/✗ as relative.')+'</span></div>':'')+
+        (s.yn[3]==='2024'
+          ?'<span class="sub2"> — 2021 Census rent ÷ 2024 price: <b>no current rent or sold-price feed for this state</b> (e.g. WA), so this is the structural yield, not a current one. It is <b>not</b> used to tilt the rank; the <b>Market now</b> line above shows how prices are actually moving here.</span>'
+          :'<span class="sub2"> — rent ÷ the <b>current</b> price ('+
+            (s.yn[3]==='est.'?'ABS nowcast':((s.yn[3]==='VG≈'?'VG component match':'VG sold')+(s.yn[2]?' · '+s.yn[2]:'')))+
+            '), rent = <b class="hit">current market rent</b>'+(s.yn[5]?' ('+s.yn[5]+', state bond data)':'')+'. Both sides current.</span>')+
+        '</div>':'')+
       '<div style="grid-column:1/-1;margin-top:4px"><span>🔎 Current sold prices (any state):</span> '+
         '<a target="_blank" rel="noopener" href="'+soldLink(s)+'">realestate.com.au →</a> · '+
         '<a target="_blank" rel="noopener" href="'+domainSoldLink(s)+'">Domain →</a>'+
