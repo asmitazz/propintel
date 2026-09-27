@@ -383,6 +383,52 @@ def _nsw_rolling_yoy() -> dict[str, dict]:
     return out
 
 
+_SA_MEDIAN_PKG = "metro-median-house-sales"
+
+
+def pull_sa_medians() -> dict[str, dict]:
+    """SA (metropolitan Adelaide) house sold-price CHANGE by named suburb — from Land Services
+    SA's 'Metro median house sales' quarterly file on Data SA. The file carries its own YoY
+    'Median Change' (this quarter vs the same quarter last year) and the current sales count,
+    so no computation is needed. ≥5 sales this quarter to filter noise; house only, metro only.
+    Keyed 'SA|SUBURB_UPPER' → {state, h_yoy, h_n, vol, asof, prior}."""
+    pkg = cf.get(f"https://data.sa.gov.au/data/api/3/action/package_show?id={_SA_MEDIAN_PKG}",
+                 impersonate="chrome", timeout=30).json()["result"]
+    cand = []
+    for x in pkg["resources"]:
+        if x.get("format") != "XLSX":
+            continue
+        m = re.search(r"lsg_stats_(20\d\d)_(?:q(\d)|(\d)q)", x["url"], re.I)
+        if m:
+            cand.append((int(m.group(1)), int(m.group(2) or m.group(3)), x))
+    if not cand:
+        return {}
+    yr, q, latest = max(cand, key=lambda t: (t[0], t[1]))
+    asof = f"Q{q} {yr}"
+    wb = openpyxl.load_workbook(io.BytesIO(cf.get(latest["url"], impersonate="chrome", timeout=60).content),
+                                read_only=True, data_only=True)
+    ws = wb[wb.sheetnames[0]]
+    out: dict[str, dict] = {}
+    for row in ws.iter_rows(min_row=2, values_only=True):
+        if len(row) < 7 or not row[1]:
+            continue
+        try:
+            cur_n, chg = float(row[4]), float(row[6])
+        except (TypeError, ValueError):
+            continue
+        if cur_n < 10:            # single-quarter YoY is noisy on thin samples; need ≥10 sales
+            continue
+        # No 'vol' key: SA's count is single-quarter, not the 12-month rolling volume NSW
+        # carries — setting it would mislabel the buyer-activity line and the "falling" flag.
+        out[f"SA|{str(row[1]).strip().upper()}"] = {
+            "state": "SA", "h_yoy": round(chg * 100, 1), "h_n": int(cur_n),
+            "asof": asof, "prior": "same qtr prior yr"}
+    return out
+
+
+import openpyxl  # noqa: E402  (SA/VIC medians need it; kept local to avoid a hard dep for NSW-only)
+
+
 def build_yoy(nsw_cur: str = "2025", nsw_prev: str = "2024") -> dict[str, dict]:
     """{"STATE|SUBURB_UPPER": {state, h_yoy, h_n, a_yoy, a_n, asof, prior}} — current per-suburb
     SOLD-price change from the state Valuer-General (far fresher than the 2024 ABS medians the rank
@@ -412,6 +458,10 @@ def build_yoy(nsw_cur: str = "2025", nsw_prev: str = "2024") -> dict[str, dict]:
             for sub, v in vic.items():
                 rec = out.setdefault(f"VIC|{sub}", {"state": "VIC", "asof": v["asof"], "prior": v["prior"]})
                 rec[field] = v["yoy"]
+    except Exception:
+        pass
+    try:
+        out.update(pull_sa_medians())           # SA: metro Adelaide house YoY + volume
     except Exception:
         pass
     return out
@@ -495,6 +545,21 @@ if __name__ == "__main__":
         else:
             p.write_text(json.dumps(data, separators=(",", ":"), ensure_ascii=False))
             print(f"Wrote nsw_sales.json — {data.get('n',0)} recent sales, latest {data.get('asof')}")
+    elif "--sa" in sys.argv:
+        # Merge SA into the existing vg_yoy.json WITHOUT re-fetching NSW/VIC (avoids the heavy
+        # PSI pull and its clobber risk). Full `--yoy` also includes SA now.
+        p = ROOT / "data" / "vg_yoy.json"
+        cache = json.loads(p.read_text()) if p.exists() else {}
+        sa = pull_sa_medians()
+        if len(sa) < 50:
+            print(f"REFUSING to merge — thin SA result ({len(sa)}).")
+        else:
+            cache = {k: v for k, v in cache.items() if not k.startswith("SA|")}
+            cache.update(sa)
+            p.write_text(json.dumps(cache, separators=(",", ":")))
+            print(f"Merged SA — {len(sa)} suburbs; vg_yoy.json now {len(cache)} "
+                  f"(NSW {sum(1 for k in cache if k.startswith('NSW|'))}, "
+                  f"VIC {sum(1 for k in cache if k.startswith('VIC|'))}, SA {len(sa)}).")
     elif "--yoy" in sys.argv:
         yoy = build_yoy()
         nsw = sum(1 for k in yoy if k.startswith("NSW|"))
