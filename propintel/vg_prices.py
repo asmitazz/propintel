@@ -417,11 +417,85 @@ def build_yoy(nsw_cur: str = "2025", nsw_prev: str = "2024") -> dict[str, dict]:
     return out
 
 
+def _title(s: str) -> str:
+    """Tidy an ALL-CAPS street/suburb for display (keeps ordinals & O' names readable)."""
+    return " ".join(w.capitalize() for w in s.split()).replace("'S", "'s")
+
+
+def pull_nsw_recent_sales(weeks: int = 12, cap: int = 800) -> dict:
+    """The most recent NSW arm's-length residential sales WITH addresses — from the weekly PSI
+    files (public land-registry data). Each: date, price, kind (h/a), address, suburb. Sorted
+    by contract date, newest first, capped. Answers 'where are people buying right now' at the
+    property level. Public site publishes these per the owner's choice; NSW-only (only state
+    with a free address-level feed)."""
+    urls = _nsw_weekly_urls()
+    if not urls:
+        return {}
+    seen, sales = set(), []
+    for u in urls[-weeks:]:
+        try:
+            raw = cf.get(u, impersonate="chrome", timeout=60, headers=_NSW_HDR).content
+        except Exception:
+            continue
+        _collect_nsw_sales(raw, seen, sales)
+    sales.sort(key=lambda s: s["d"], reverse=True)
+    sales = sales[:cap]
+    asof = sales[0]["d"] if sales else ""
+    # ISO-ify the asof (YYYYMMDD -> YYYY-MM-DD) and each date for display
+    for s in sales:
+        s["d"] = f"{s['d'][:4]}-{s['d'][4:6]}-{s['d'][6:]}"
+    return {"asof": f"{asof[:4]}-{asof[4:6]}-{asof[6:]}" if asof else "", "n": len(sales), "sales": sales}
+
+
+def _collect_nsw_sales(raw: bytes, seen: set, out: list) -> None:
+    """Parse a weekly PSI zip (zip-of-zips) into address-level sale dicts, deduped."""
+    z = zipfile.ZipFile(io.BytesIO(raw))
+    for name in z.namelist():
+        if name.lower().endswith(".zip"):
+            _collect_nsw_sales(z.read(name), seen, out)
+        elif name.upper().endswith(".DAT"):
+            for line in z.read(name).decode("latin-1", "ignore").splitlines():
+                if not line.startswith("B;"):
+                    continue
+                f = line.split(";")
+                if len(f) < 19 or f[18].strip().upper() != "RESIDENCE":
+                    continue
+                cdate, loc = f[13].strip(), f[9].strip()
+                if len(cdate) != 8 or not cdate.isdigit() or not loc:
+                    continue
+                try:
+                    price = int(f[15])
+                except (ValueError, IndexError):
+                    continue
+                if price < 200000:
+                    continue
+                unit, hno, st = f[6].strip(), f[7].strip(), f[8].strip()
+                num = (f"{unit}/{hno}" if unit else hno).strip()
+                addr = f"{num} {_title(st)}".strip() if st else _title(loc)
+                key = (cdate, price, addr, loc.upper())
+                if key in seen:
+                    continue
+                seen.add(key)
+                out.append({"d": cdate, "p": price, "k": "a" if unit else "h",
+                            "a": addr, "s": _title(loc)})
+
+
 if __name__ == "__main__":
     import json
     import sys
     from .config import ROOT
-    if "--yoy" in sys.argv:
+    if "--sales" in sys.argv:
+        data = pull_nsw_recent_sales()
+        prev = {}
+        p = ROOT / "data" / "nsw_sales.json"
+        if p.exists():
+            prev = json.loads(p.read_text())
+        if data.get("n", 0) < 100 and (prev.get("n") or 0) >= 100:
+            print(f"REFUSING to write nsw_sales.json — thin ({data.get('n',0)}); kept previous.")
+        else:
+            p.write_text(json.dumps(data, separators=(",", ":"), ensure_ascii=False))
+            print(f"Wrote nsw_sales.json — {data.get('n',0)} recent sales, latest {data.get('asof')}")
+    elif "--yoy" in sys.argv:
         yoy = build_yoy()
         nsw = sum(1 for k in yoy if k.startswith("NSW|"))
         vic = sum(1 for k in yoy if k.startswith("VIC|"))

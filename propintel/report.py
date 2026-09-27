@@ -1100,6 +1100,55 @@ def _lookup_data(recs: list[dict], live: dict) -> str:
     return json.dumps(out, separators=(",", ":"))
 
 
+def _nsw_sales() -> dict:
+    try:
+        return json.loads((ROOT / "data" / "nsw_sales.json").read_text())
+    except Exception:
+        return {}
+
+
+def _suburb_title(name: str) -> str:
+    return " ".join(w.capitalize() for w in name.split())
+
+
+def _buyers_section(recs: list[dict]) -> str:
+    """Where buyers are actually active — from the NSW land registry: suburbs by transaction
+    volume (where the most sales are), and the most recent individual sales with addresses,
+    split by asset and sorted by date. Public land-registry data; NSW-only free address feed."""
+    vg = _vg_cache()
+    vols = [(k.split("|", 1)[1], v.get("vol"), v.get("vol_chg"), v.get("h_yoy"))
+            for k, v in vg.items() if k.startswith("NSW|") and v.get("vol")]
+    vols.sort(key=lambda x: -(x[1] or 0))
+
+    def chg(c):
+        if c is None:
+            return '<span class="sub2">—</span>'
+        cls = "hit" if c > 0 else ("warn-flag" if c < 0 else "sub2")
+        return f'<span class="{cls}">{c:+d}%</span>'
+
+    def hy(v):
+        if v is None:
+            return '<span class="sub2">—</span>'
+        cls = "hit" if v > 0 else ("warn-flag" if v < 0 else "sub2")
+        return f'<span class="{cls}">{v:+.1f}%</span>'
+
+    rows = "".join(
+        f'<tr><td><b>{_suburb_title(nm)}</b></td><td class="num">{vol:,}</td>'
+        f'<td class="num">{chg(c)}</td><td class="num">{hy(h)}</td></tr>'
+        for nm, vol, c, h in vols[:25])
+    sales = _nsw_sales()
+    n, asof = sales.get("n", 0), sales.get("asof", "")
+    return f'''<h2>Where buyers are active — actual sales</h2>
+    <p class="sub">Real buyer demand from the <b>NSW land registry</b> (free public data): which suburbs are transacting the most, and the most recent individual sales <b>with addresses</b>, split by asset type and sorted by date. NSW is the only state with a free address-level sold feed; the volume/date view uses the same registry.</p>
+    <h3 class="ph">Where the most sales are happening <span class="sub2">— rolling 12 months, by transaction count</span></h3>
+    <div class="tablewrap"><table style="min-width:460px"><thead><tr><th>Suburb</th><th class="num">Sales 12mo</th><th class="num">vs prior yr</th><th class="num">Sold-price YoY</th></tr></thead><tbody>{rows}</tbody></table></div>
+    <p class="m-detail" style="margin-top:6px">High volume = a <b>liquid, actively-traded</b> market (easier to buy, and to sell later); a big <span class="warn-flag">fall</span> in volume means buyers are stepping back even if prices haven't moved yet.</p>
+    <h3 class="ph" style="margin-top:20px">Most recent sales <span class="sub2">— {n} latest to {asof}, with addresses</span></h3>
+    <div class="tabs"><button class="tabbtn active" onclick="salesFilter('all',this)">All</button><button class="tabbtn" onclick="salesFilter('h',this)">Houses</button><button class="tabbtn" onclick="salesFilter('a',this)">Units / townhouses</button></div>
+    <div id="salesTable" class="tablewrap" style="margin-top:8px"></div>
+    <p class="m-detail" style="margin-top:8px">Individual arm's-length residential sales (≥$200k) straight from the NSW Valuer-General's weekly Property Sales Information — actual addresses, prices and contract dates, the freshest ground-truth of what buyers are paying and where.</p>'''
+
+
 def build():
     global _ANALYSIS_WEIGHTS
     data = json.loads(ANALYSIS.read_text())
@@ -1149,6 +1198,8 @@ def build():
         outlook=_outlook_section(data.get("projections", {}), data.get("trends", {"states": []})),
         summary=_summary_section(recs, data.get("trends", {"states": []}), data.get("projections", {})),
         lookupdata=_lookup_data(recs, live),
+        buyers=_buyers_section(recs),
+        salesdata=json.dumps(_nsw_sales().get("sales", []), separators=(",", ":"), ensure_ascii=False),
         total=data["count"], n_house=data["n_house"], n_townhouse=data["n_townhouse"],
         n_gentrify=n_gentrify, n_ruled=n_ruled, n_hotspot=n_hotspot,
         generated=data["generated"][:10], built=_built_stamp(),
@@ -1394,6 +1445,8 @@ details{{margin-top:10px}} summary{{cursor:pointer;color:var(--accent);font-size
   {stratblocks}
   </div>
 
+  <div class="page" id="page-buyers">{buyers}</div>
+
   <div class="page" id="page-compare">
   <h2>Compare suburbs side by side</h2>
   <p class="sub">Add any suburbs — from the shortlist or the full 1,873 — and line them up across every growth-fundamentals metric at once. This is the head-to-head the per-suburb lookup can't give you; the <span class="hit">best value in each row is highlighted</span>. Hazard and selling-agent links are in the last rows. No dollar figures — this is a fundamentals-only comparison.</p>
@@ -1443,6 +1496,17 @@ details{{margin-top:10px}} summary{{cursor:pointer;color:var(--accent);font-size
 <script id="sersi-sig" type="application/json">{sigdata}</script>
 <script>
 var LOOKUP = {lookupdata};
+var SALES = {salesdata};
+function salesFilter(k,btn){{
+  var t=btn.parentNode.querySelectorAll('.tabbtn'); for(var i=0;i<t.length;i++)t[i].classList.remove('active'); btn.classList.add('active');
+  renderSales(k);
+}}
+function renderSales(k){{
+  var rows=SALES.filter(function(s){{return k==='all'||s.k===k;}});
+  var html='<table style="min-width:540px"><thead><tr><th>Sold</th><th>Address</th><th>Suburb</th><th class="num">Price</th><th>Type</th></tr></thead><tbody>';
+  html+=rows.map(function(s){{return '<tr><td>'+s.d+'</td><td>'+s.a+'</td><td>'+s.s+'</td><td class="num">$'+s.p.toLocaleString()+'</td><td>'+(s.k==='h'?'House':'Unit/TH')+'</td></tr>';}}).join('');
+  var el=document.getElementById('salesTable'); if(el)el.innerHTML=html+'</tbody></table>';
+}}
 var CMP_DEFAULT = {cmpdefault};
 // asset = [price(hidden→null), score, band(hidden→null), cycle, market_yield, gross_yield].
 // No dollar figures are shown — yield is rendered only as a ✓/— gate at ~4.5% market yield.
@@ -1639,7 +1703,7 @@ try{{ (CMP_DEFAULT||[]).forEach(cmpAdd); }}catch(e){{}}
 // group from the page id so a jump always lights the right group AND its sub-tabs.
 var GROUPS=[
   ['overview','Overview',[['summary','Summary']]],
-  ['suburbs','Suburbs',[['shortlist','Shortlist'],['compare','Compare']]],
+  ['suburbs','Suburbs',[['shortlist','Shortlist'],['buyers','Buyer activity'],['compare','Compare']]],
   ['market','Market',[['trends','Trends'],['macro','Macro signals'],['outlook','10-yr Outlook'],['economy','Economy']]],
   ['drivers','Drivers',[['catalysts','Catalysts'],['policy','Policy'],['scenario','Scenario & Ripple'],['news','News']]],
   ['method','Method',[['context','Context'],['method','Method']]]
@@ -1660,6 +1724,7 @@ function _renderSub(grp,activeId){{
 }}
 function showPage(id){{
   document.querySelectorAll('.page').forEach(function(p){{p.classList.toggle('active',p.id==='page-'+id)}});
+  if(id==='buyers'&&!window._salesRendered){{renderSales('all');window._salesRendered=1;}}
   var grp=_grpOf(id); _lastPage[grp[0]]=id;
   document.querySelectorAll('.gtab').forEach(function(b){{b.classList.toggle('active',b.getAttribute('data-group')===grp[0])}});
   _renderSub(grp,id);
