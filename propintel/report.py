@@ -807,6 +807,31 @@ def _load_live_prices() -> dict:
         return {}
 
 
+def _yield_now(r: dict):
+    """Current, price-adjusted house market yield, derived from the VG sold-price change.
+    Rent is still Census-2021 + market uplift, so ONLY the price side is current — this
+    updates the stale 2024-price yield with how prices have actually moved.
+
+    VIC only. VIC's VG single-quarter YoY sits on an ~Oct–Dec-2024 base that lines up with
+    the ABS 2024 median, so price_2024 × (1 + h_yoy) is a fair current level. NSW's rolling-12
+    window (to Sep 2026 vs the prior 12) misaligns with the 2024 base and would understate the
+    current price → overstate yield → produce false ✓, the worst error for a buyer, so NSW and
+    everywhere without a VG match render '—'. Display-only: never touches the score.
+    Returns [yield_now_pct, gate(0/1), asof] or None."""
+    vg, h = r.get("vgc"), r.get("house")
+    if not (vg and h and r.get("state") == "VIC"):
+        return None
+    hy, rent = vg.get("h_yoy"), r.get("median_weekly_rent")
+    if hy is None or not rent or not h.get("price_2024"):
+        return None
+    cur_price = h["price_2024"] * (1 + hy / 100)
+    if cur_price <= 0:
+        return None
+    uplift = h["market_yield"] - h["gross_yield"]          # market-vs-census rent premium (pp)
+    y = rent * 52 / cur_price * 100 + uplift
+    return [round(y, 2), 1 if y >= 4.5 else 0, vg.get("asof")]
+
+
 def _lookup_data(recs: list[dict], live: dict) -> str:
     """Compact JSON of every suburb for the client-side lookup."""
     def asset(a):
@@ -837,6 +862,7 @@ def _lookup_data(recs: list[dict], live: dict) -> str:
             "idf": r.get("id_pop_fc"), "idfy": r.get("id_year_fc"), "idg": r.get("id_growth_pct"),
             "mkt": r.get("mkt"),   # current capital-city price direction (Cotality) reality check
             "vgc": r.get("vgc"),   # real per-suburb VG sold-price change + buyer activity (VIC/NSW)
+            "yn": _yield_now(r),   # current price-adjusted house yield + 4.5% gate (VIC, display-only)
         })
     return json.dumps(out, separators=(",", ":"))
 
@@ -1249,6 +1275,10 @@ function doLookup(q){{
       (s.vgc&&s.vgc.vol?'<div style="grid-column:1/-1"><span>🏠 Buyer activity (where people are buying):</span> <b>'+s.vgc.vol.toLocaleString()+'</b> sales in the last 12mo'+
         (s.vgc.vol_chg!=null?' <b class="'+(s.vgc.vol_chg>0?'hit':(s.vgc.vol_chg<0?'warn-flag':''))+'">('+(s.vgc.vol_chg>0?'+':'')+s.vgc.vol_chg+'% vs prior yr)</b>':'')+
         '<span class="sub2"> — actual transaction volume from the NSW land registry; rising = more buyers active here.</span></div>':'')+
+      (s.yn?'<div style="grid-column:1/-1"><span>💰 Yield now (house, price-adjusted):</span> '+
+        '<b class="'+(s.yn[1]?'hit':'warn-flag')+'">~'+s.yn[0]+'%</b> '+
+        (s.yn[1]?'<b class="hit">✓ clears the 4.5% target</b>':'<b class="warn-flag">✗ below the 4.5% target</b>')+
+        '<span class="sub2"> — Census-2021 market rent ÷ the <b>current</b> VG-implied price ('+s.yn[2]+'): the stale 2024 yield re-based on how prices have actually moved. Only the price side is current (rent is still lagged); houses only; VIC only (NSW\\'s rolling window would overstate it).</span></div>':'')+
       '<div style="grid-column:1/-1;margin-top:4px"><span>🔎 Current sold prices (any state):</span> '+
         '<a target="_blank" rel="noopener" href="'+soldLink(s)+'">realestate.com.au →</a> · '+
         '<a target="_blank" rel="noopener" href="'+domainSoldLink(s)+'">Domain →</a>'+
@@ -1308,6 +1338,7 @@ function cmpRemove(name){{ CMP=CMP.filter(function(s){{return s.n!==name;}}); re
 var CMP_ROWS=[
   {{l:'State', g:function(s){{return s.st;}}}},
   {{l:'House score /100', dir:'high', g:function(s){{return s.h?s.h[1]:null;}}}},
+  {{l:'Yield now (VIC, house)', dir:'high', g:function(s){{return s.yn?s.yn[0]:null;}}, f:function(v){{return v==null?'—':'~'+v+'% '+(v>=4.5?'✓':'✗');}}}},
   {{l:'Townhouse score /100', dir:'high', g:function(s){{return s.t?s.t[1]:null;}}}},
   {{l:'Projected 10yr growth', dir:'high', g:function(s){{return s.pj;}}, f:function(v){{return v==null?'—':'+'+v+'%';}}}},
   {{l:'Pop growth /yr', dir:'high', g:function(s){{return s.pg;}}, f:function(v){{return v==null?'—':v+'%';}}}},
