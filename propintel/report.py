@@ -1158,9 +1158,26 @@ def _buyers_section(recs: list[dict]) -> str:
         f'<td class="num">{chg(c)}</td><td class="num">{hy(h)}</td></tr>'
         for nm, vol, c, h in vols[:25])
     sales = _nsw_sales()
+    slist = sales.get("sales", [])
     n, asof = sales.get("n", 0), sales.get("asof", "")
+    # --- Snapshot (summary first, detail below) ---
+    n_h = sum(1 for s in slist if s.get("k") == "h")
+    n_u = n - n_h
+    chgs = sorted(c for _, _, c, _ in vols if c is not None)
+    med_chg = chgs[len(chgs) // 2] if chgs else None
+    top = vols[0] if vols else None
+    total_12mo = sum(v for _, v, _, _ in vols)
+    trend = ("<b class='warn-flag'>cooling</b>" if (med_chg or 0) < -5
+             else "<b class='hit'>heating up</b>" if (med_chg or 0) > 5 else "<b>steady</b>")
+    snapshot = f'''<div class="stat-row">
+      <div class="stat"><div class="v">{total_12mo:,}</div><div class="l">sales across {len(vols)} NSW suburbs (12mo)</div></div>
+      <div class="stat"><div class="v">{med_chg:+d}%</div><div class="l">typical volume vs last year — buyers are {trend}</div></div>
+      <div class="stat"><div class="v">{_suburb_title(top[0]) if top else '—'}</div><div class="l">most-active suburb ({top[1]:,} sales)</div></div>
+      <div class="stat"><div class="v">{n_h:,} / {n_u:,}</div><div class="l">latest sales: houses / units, to {asof}</div></div>
+    </div>''' if vols else ""
     return f'''<h2>Where buyers are active — actual sales</h2>
     <p class="sub">Real buyer demand from the <b>NSW land registry</b> (free public data): which suburbs are transacting the most, and the most recent individual sales <b>with addresses</b>, split by asset type and sorted by date. NSW is the only state with a free address-level sold feed; the volume/date view uses the same registry.</p>
+    {snapshot}
     <h3 class="ph">Where the most sales are happening <span class="sub2">— rolling 12 months, by transaction count</span></h3>
     <div class="tablewrap"><table style="min-width:460px"><thead><tr><th>Suburb</th><th class="num">Sales 12mo</th><th class="num">vs prior yr</th><th class="num">Sold-price YoY</th></tr></thead><tbody>{rows}</tbody></table></div>
     <p class="m-detail" style="margin-top:6px">High volume = a <b>liquid, actively-traded</b> market (easier to buy, and to sell later); a big <span class="warn-flag">fall</span> in volume means buyers are stepping back even if prices haven't moved yet.</p>
@@ -1587,6 +1604,15 @@ function doLookup(q){{
   box.innerHTML=hits.map(function(s){{
     var g = s.gf==='Gentrifying' ? ('▲ Gentrifying'+(s.ic?' ✓ (income confirming)':'')) : (s.gf==='Trap'?'▼ Trap':'');
     return '<div class="lucard"><h4>'+(s.hs?'🔥 ':'')+s.n+' <span style="color:var(--muted);font-weight:600">· '+s.st+'</span></h4>'+
+      '<div style="padding:9px 11px;background:var(--accent-soft);border-radius:9px;margin-bottom:10px;font-size:13px;line-height:1.5">'+
+        '<b>📌 At a glance:</b> '+
+        (s.cp?'ranks <b>#'+s.cp+'</b> for houses'+(s.cfr&&s.cfr!=s.cp?' <span class="'+(s.cfr>s.cp?'hit':'warn-flag')+'">('+(s.cfr>s.cp?'▲':'▼')+Math.abs(s.cfr-s.cp)+' vs fundamentals)</span>':''):'not house-ranked')+
+        (s.yn?' · yield '+(s.yn[3]==='2024'?'~'+s.yn[0]+'% <span class="sub2">(structural)</span>':'<b class="'+(s.yn[1]?'hit':'warn-flag')+'">~'+s.yn[0]+'% '+(s.yn[1]?'✓':'✗')+'</b>'):'')+
+        (s.mkt&&!s.mkt.r&&s.mkt.y!=null?' · '+(s.mkt.y>0?'<b class="hit">'+s.mkt.c+' +'+s.mkt.y+'%/yr</b>':'<b class="warn-flag">'+s.mkt.c+' '+s.mkt.y+'%/yr</b>')+'<span class="sub2"> now</span>':(s.mkt&&s.mkt.r?' · <span class="sub2">regional market</span>':''))+
+        (s.vgc&&s.vgc.h_yoy!=null?' · <span class="sub2">VG sold</span> <b class="'+(s.vgc.h_yoy>0?'hit':'warn-flag')+'">'+(s.vgc.h_yoy>0?'+':'')+s.vgc.h_yoy+'%</b>':'')+
+        (s.hs?' · <b>🔥 hotspot</b>':'')+(s.gf==='Gentrifying'?' · <b class="hit">▲ gentrifying</b>':(s.gf==='Trap'?' · <b class="warn-flag">▼ value trap</b>':''))+
+        '<div class="sub2" style="margin-top:3px">Full detail below.</div>'+
+      '</div>'+
       '<div class="lugrid">'+
       (s.cp?'<div style="grid-column:1/-1"><span>📈 Rank now (fundamentals, current-adjusted):</span> '+
         '<b>#'+s.cp+'</b> of the house shortlist'+
