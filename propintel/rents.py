@@ -109,10 +109,120 @@ def pull_vic_rents() -> dict[str, dict]:
     return out
 
 
-def build_rents() -> dict[str, dict]:
-    """Merge every implemented state into one cache. Currently: VIC."""
+# QLD RTA bond-lodgement median rents (updated in place at this path each quarter).
+_QLD_URL = "https://www.rta.qld.gov.au/sites/default/files/2023-04/rta-bond-statistics.xlsx"
+
+
+def _last_nonnull(row, lo: int, hi: int):
+    for v in reversed(row[lo:hi + 1]):
+        if isinstance(v, (int, float)) and v > 0:
+            return int(round(v))
+    return None
+
+
+def pull_qld_rents() -> dict[str, dict]:
+    """QLD current market rent by named suburb from the RTA bond data: house = 3-bed house,
+    unit/townhouse = 2-bed townhouse (fallback 3-bed townhouse, then 2-bed flat). Weekly $."""
+    content = cf.get(_QLD_URL, impersonate="chrome", timeout=90).content
+    import openpyxl
+    wb = openpyxl.load_workbook(io.BytesIO(content), read_only=True, data_only=True)
+    ws = wb["4 sub-rents"]
+    rows = list(ws.iter_rows(min_row=1, values_only=True))
+    months, years = rows[5], rows[6]
+    last = max(i for i in range(len(years))
+               if isinstance(years[i], (int, float)) or (isinstance(years[i], str) and str(years[i]).strip().isdigit()))
+    asof = f"{months[last]} {years[last]}"
+    house, th, flat = {}, {}, {}
+    for row in rows[7:]:
+        if len(row) <= 3 or not row[2] or not row[3]:
+            continue
+        sub = str(row[2]).strip().upper()
+        dw = str(row[3]).strip()
+        val = _last_nonnull(row, 4, last)
+        if val is None:
+            continue
+        if dw == "House 3":
+            house[sub] = val
+        elif dw == "Townhouse 2":
+            th[sub] = val
+        elif dw == "Townhouse 3":
+            th.setdefault(sub, val)
+        elif dw == "Flat 2":
+            flat[sub] = val
     out: dict[str, dict] = {}
-    for name, fn in (("VIC", pull_vic_rents),):
+    for sub in set(house) | set(th) | set(flat):
+        rec = {"asof": asof}
+        if sub in house:
+            rec["h"] = house[sub]
+        u = th.get(sub) or flat.get(sub)
+        if u:
+            rec["u"] = u
+        if "h" in rec or "u" in rec:
+            out[f"QLD|{sub}"] = rec
+    return out
+
+
+_SA_PKG = "private-rent-report"
+
+
+def _num(v):
+    if isinstance(v, (int, float)):
+        return int(round(v)) if v > 0 else None
+    if isinstance(v, str):
+        s = v.strip().replace(",", "")
+        try:
+            return int(round(float(s))) if float(s) > 0 else None
+        except ValueError:
+            return None
+    return None
+
+
+def pull_sa_rents() -> dict[str, dict]:
+    """SA current market rent by named suburb from the Office of Consumer & Business Services
+    Private Rental Report (Data SA CKAN): house = all-houses median (col 20), unit/townhouse =
+    all-flats/units median (col 10). Weekly $. The per-quarter file changes, so resolve the
+    newest by the YYYY-MM in the resource name."""
+    import re as _re
+    pkg = cf.get(f"https://data.sa.gov.au/data/api/3/action/package_show?id={_SA_PKG}",
+                 impersonate="chrome", timeout=30).json()["result"]
+    res = [x for x in pkg["resources"]
+           if x.get("format") == "XLSX" and _re.search(r"20\d\d-\d\d", x.get("name", ""))]
+    if not res:
+        return {}
+    res.sort(key=lambda x: _re.search(r"(20\d\d-\d\d)", x["name"]).group(1))
+    latest = res[-1]
+    ym = _re.search(r"(20\d\d)-(\d\d)", latest["name"])
+    mon = {"03": "Mar", "06": "Jun", "09": "Sep", "12": "Dec"}.get(ym.group(2), ym.group(2))
+    asof = f"{mon} {ym.group(1)}"
+    import openpyxl
+    wb = openpyxl.load_workbook(io.BytesIO(cf.get(latest["url"], impersonate="chrome", timeout=60).content),
+                                read_only=True, data_only=True)
+    ws = wb["Suburb"]
+    _SKIP = {"METRO", "COUNTRY", "TOTAL", "SOUTH AUSTRALIA", "ROW LABELS", "GRAND TOTAL"}
+    out: dict[str, dict] = {}
+    for row in ws.iter_rows(min_row=18, values_only=True):
+        name = row[0] if row else None
+        if not name or not isinstance(name, str):
+            continue
+        sub = name.strip().upper()
+        if sub in _SKIP:
+            continue
+        h = _num(row[20]) if len(row) > 20 else None
+        u = _num(row[10]) if len(row) > 10 else None
+        if h or u:
+            rec = {"asof": asof}
+            if h:
+                rec["h"] = h
+            if u:
+                rec["u"] = u
+            out[f"SA|{sub}"] = rec
+    return out
+
+
+def build_rents() -> dict[str, dict]:
+    """Merge every implemented state into one cache. Currently: VIC, QLD, SA."""
+    out: dict[str, dict] = {}
+    for name, fn in (("VIC", pull_vic_rents), ("QLD", pull_qld_rents), ("SA", pull_sa_rents)):
         try:
             got = fn()
             print(f"  [{name}] rent suburbs: {len(got)}")
