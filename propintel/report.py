@@ -825,6 +825,51 @@ def _vg_cache() -> dict:
     return _VG_CACHE
 
 
+_RENTS_CACHE = None
+
+
+def _rents_cache() -> dict:
+    global _RENTS_CACHE
+    if _RENTS_CACHE is None:
+        try:
+            _RENTS_CACHE = json.loads((ROOT / "data" / "rents.json").read_text())
+        except Exception:
+            _RENTS_CACHE = {}
+    return _RENTS_CACHE
+
+
+def _rent_read(r: dict, asset: str):
+    """Current market rent (weekly $) for an asset from the state bond-data cache, matched
+    by exact name then by composite-name component (same rule as _vg_read). Returns
+    (rent, asof, via) or (None, None, None). key 'h' = house, 'u' = unit/townhouse."""
+    cache = _rents_cache()
+    if not cache:
+        return None, None, None
+    st = r["state"]
+    fld = "h" if asset == "house" else "u"
+    direct = cache.get(f"{st}|{r['name'].split(' - ')[0].strip().upper()}")
+    if direct and direct.get(fld):
+        return direct[fld], direct.get("asof"), None
+    for seg in r["name"].replace("-", " - ").split(" - "):
+        seg = re.sub(r"\((?:NSW|Vic\.?|Qld|SA|WA|Tas\.?|ACT|NT)\)", "", seg, flags=re.I).strip()
+        if not seg or seg.lower() in _DIRWORDS:
+            continue
+        e = cache.get(f"{st}|{seg.upper()}")
+        if e and e.get(fld):
+            return e[fld], e.get("asof"), seg.title()
+    return None, None, None
+
+
+def _rent_now(r: dict, asset: str):
+    """(weekly_rent, source, asof) — current bond-data market rent if matched, else the
+    Census-2021 rent. 'bond' rent is already market (no uplift); 'census' needs the uplift."""
+    rent, asof, _ = _rent_read(r, asset)
+    if rent:
+        return rent, "bond", asof
+    cr = r.get("median_weekly_rent")
+    return (cr, "census", None) if cr else (None, None, None)
+
+
 def _vg_read(r: dict):
     """Best VG house sold-price change for a suburb, filling the '—' gaps the exact-match
     layer leaves. First a direct exact match; failing that, split the composite SA2 name on
@@ -879,39 +924,35 @@ def _cur_price(r: dict, asset: str, hy):
     return None, None
 
 
-def _yield_now_asset(r: dict, asset: str, hy, asof, src):
-    """Current MARKET yield for one asset block, for DISPLAY (the ✓/✗ vs the 4.5% target).
-    rent×52 ÷ current price + the market-vs-Census uplift. Price is current (VG or nowcast);
-    rent is still Census-2021 + uplift. Returns [pct, gate(0/1), asof_or_None, source]."""
+def _market_now(r: dict, asset: str, hy):
+    """Current MARKET yield for an asset on ONE consistent basis: current price (VG-implied or
+    ABS nowcast) with the current rent — bond rent as-is (already market), or Census rent plus
+    the market uplift. Returns (yield_pct, price_src, rent_src, rent_asof) or (None,…)."""
     a = r.get(asset)
-    rent = r.get("median_weekly_rent")
     cur, psrc = _cur_price(r, asset, hy)
-    if not a or not rent or cur is None or cur <= 0:
+    rent, rsrc, rasof = _rent_now(r, asset)
+    if not a or cur is None or cur <= 0 or not rent:
+        return None, None, None, None
+    uplift = 0.0 if rsrc == "bond" else (a["market_yield"] - a["gross_yield"])
+    return rent * 52 / cur * 100 + uplift, psrc, rsrc, rasof
+
+
+def _yield_now_asset(r: dict, asset: str, hy, asof, src):
+    """DISPLAY current market yield (the ✓/✗ vs the 4.5% target). Price is current (VG or
+    nowcast); rent is current bond rent where matched, else Census-2021 + uplift.
+    Returns [pct, gate(0/1), price_asof, price_src, rent_src, rent_asof] or None."""
+    y, psrc, rsrc, rasof = _market_now(r, asset, hy)
+    if y is None:
         return None
     ysrc = src if (psrc == "vg" and src) else "est."
-    uplift = a["market_yield"] - a["gross_yield"]
-    y = rent * 52 / cur * 100 + uplift
-    return [round(y, 2), 1 if y >= 4.5 else 0, (asof if psrc == "vg" else None), ysrc]
-
-
-def _gross_now(r: dict, asset: str, hy):
-    """Current GROSS yield (no uplift) — the exact basis analyze.py normalises for the yield
-    score signal, so it can be swapped in at the model's own yield weight. Falls back to the
-    stored 2024 gross_yield where no current price exists (→ zero adjustment for that row)."""
-    a = r.get(asset)
-    rent = r.get("median_weekly_rent")
-    cur, _ = _cur_price(r, asset, hy)
-    if not a:
-        return None
-    if not rent or cur is None or cur <= 0:
-        return a.get("gross_yield")
-    return rent * 52 / cur * 100
+    return [round(y, 2), 1 if y >= 4.5 else 0, (asof if psrc == "vg" else None), ysrc, rsrc, rasof]
 
 
 def _asset_meta(r: dict, asset: str):
     """Per-asset current-market read (no adjustment yet — that needs the cross-suburb norm).
     Houses use the VG sold-price change where available; townhouses skip VG (VIC unit YoY is
-    noisy) and use the ABS nowcast. Returns dict or None (no asset block)."""
+    noisy) and use the ABS nowcast. `market_now` is the current market yield for the re-rank;
+    the 2024 baseline it's compared against is the stored market_yield (same market basis)."""
     a = r.get(asset)
     if not a:
         return None
@@ -919,8 +960,9 @@ def _asset_meta(r: dict, asset: str):
     if asset == "house":
         hy, asof, src, via = _vg_read(r)
     yn = _yield_now_asset(r, asset, hy, asof, src)
+    mnow, _, _, _ = _market_now(r, asset, hy)
     tag = (yn[3] if yn else None) or "n/a"
-    return {"hy": hy, "yn": yn, "gross_now": _gross_now(r, asset, hy), "tag": tag}
+    return {"hy": hy, "yn": yn, "market_now": mnow, "tag": tag}
 
 
 def _apply_rerank(recs: list[dict]) -> None:
@@ -941,21 +983,24 @@ def _apply_rerank(recs: list[dict]) -> None:
                 r["_a"][asset] = m
     for asset in ("house", "townhouse"):
         el = [r for r in recs if r.get(asset) and asset in r["_a"]]
-        gross_now = {r["code"]: r["_a"][asset]["gross_now"] for r in el if r["_a"][asset]["gross_now"] is not None}
-        gross_2024 = {r["code"]: r[asset]["gross_yield"] for r in el if r[asset].get("gross_yield") is not None}
-        pn, p0 = _pct(gross_now), _pct(gross_2024)
+        # Both current and 2024 yields are on the MARKET basis (market_yield = gross + const
+        # uplift, so its percentile == the gross percentile analyze.py scored on).
+        y_now = {r["code"]: r["_a"][asset]["market_now"] for r in el if r["_a"][asset]["market_now"] is not None}
+        y_2024 = {r["code"]: r[asset]["market_yield"] for r in el if r[asset].get("market_yield") is not None}
+        pn, p0 = _pct(y_now), _pct(y_2024)
         for r in el:
             m = r["_a"][asset]
             nn, n0 = pn.get(r["code"]), p0.get(r["code"])
             adj = 100.0 * w_yield * (nn - n0) if (nn is not None and n0 is not None) else 0.0
             m["adj"] = round(adj, 2)
             yn = m["yn"]
+            rlabel = "current rent" if (yn and yn[4] == "bond") else "2021 rent"
             if yn and abs(adj) >= 0.05:
                 dirn = "lifts" if adj > 0 else "drops"
-                m["why"] = (f"current yield ~{yn[0]}% ({yn[3]}) {dirn} this vs its 2024 yield "
+                m["why"] = (f"current yield ~{yn[0]}% ({yn[3]} price · {rlabel}) {dirn} this vs its 2024 yield "
                             f"→ {adj:+.1f} on the score (yield counted once, at its {w_yield:.0%} weight)")
             elif yn:
-                m["why"] = f"current yield ~{yn[0]}% ({yn[3]}) ≈ its 2024 yield — no change"
+                m["why"] = f"current yield ~{yn[0]}% ({yn[3]} price · {rlabel}) ≈ its 2024 yield — no change"
             else:
                 m["why"] = "no current price for this asset — unchanged"
         el.sort(key=lambda r: -(r[asset]["score"] + r["_a"][asset]["adj"]))
@@ -1309,7 +1354,7 @@ details{{margin-top:10px}} summary{{cursor:pointer;color:var(--accent);font-size
   <div class="page" id="page-shortlist">
   <h2>Shortlist by strategy &amp; state</h2>
   <p class="sub"><b>Fundamentals first, refreshed with the current market.</b> Every suburb is scored on the growth signals that move before price; the <b>#</b> is that same score with only its <b>yield</b> part recomputed on today's prices (rent ÷ current price) instead of 2024, at yield's own 15% weight. Fundamentals stay the driver — this is a tilt, not a takeover. ▲/▼ shows the move vs the pure-fundamentals rank; the tag names the price source. Pick a strategy, then a state.</p>
-  <div class="banner" style="margin-bottom:14px"><b>The # is the fundamentals score with a current-yield refresh — still not a near-term price call.</b> The <b>Score</b> column is the pure structural rank (11 ABS signals, prices 2024 nowcast forward) and is <b>unchanged</b>. The <b>#</b> swaps the 2024 yield in that score for the <b>current</b> yield (rent ÷ today's price — the real VG sold price where we have it, else the ABS nowcast) — counted <b>once</b>, at yield's own 15% weight, so it can't dominate. It moves both ways: prices running ahead of rents drop a suburb (yield compresses), a price fall or rent rise lifts it. Rents are still Census-2021, so the yield levels read low across the board — treat ✓/✗ as relative, and pair the # with <b>Market → Trends</b> and each card's <b>Market now / VG sold-price</b> lines for the current direction.</div>
+  <div class="banner" style="margin-bottom:14px"><b>The # is the fundamentals score with a current-yield refresh — still not a near-term price call.</b> The <b>Score</b> column is the pure structural rank (11 ABS signals, prices 2024 nowcast forward) and is <b>unchanged</b>. The <b>#</b> swaps the 2024 yield in that score for the <b>current</b> yield (rent ÷ today's price — the real VG sold price where we have it, else the ABS nowcast) — counted <b>once</b>, at yield's own 15% weight, so it can't dominate. It moves both ways: prices running ahead of rents drop a suburb (yield compresses), a price fall or rent rise lifts it. Rent is <b>current market rent</b> from state bond data where we have it (VIC now; more states rolling in) and Census-2021 + uplift elsewhere — so the yield levels still read low where the rent is 2021; treat ✓/✗ as relative, and pair the # with <b>Market → Trends</b> and each card's <b>Market now / VG sold-price</b> lines for the current direction.</div>
   <details class="methoddrop"><summary>How the score works &amp; column key</summary>
     <p class="m-detail" style="margin-top:8px">Composite score (0–100) per asset = yield 15 · <b>gentrification 12</b> · population growth 12 · net migration 10 · <b>ripple 10</b> · affordability 9 · industry diversity 9 · supply scarcity 8 · runway (not-already-run) 6 · economic health 4 · liquidity 5 — this is the <b>Score</b> column and is unchanged. The <b>#</b> is that same score with only its <b>yield</b> component re-scored on the <b>current</b> yield (rent ÷ today's price) instead of the 2024 one — normalised on the same curve and applied at yield's own 15% weight, so yield is counted once and can't dominate; it moves both ways. ▲/▼ = places moved, and the tag is the price source (<b>VG</b> exact sold-price match · <b>VG≈</b> composite-name component match · <b>est.</b> ABS nowcast, no VG match here). <b>Ripple</b> = % below similar-income neighbours within 10km. <b>Econ base</b> = industry mix. <b>SES</b> = socio-economic decile (1 = most disadvantaged): <span class="hit">▲ gentrifying</span> · <span class="warn-flag">▼ trap</span>. Houses = land play; townhouses/villas = lower entry, higher yield.</p>
   </details>
@@ -1442,13 +1487,15 @@ function doLookup(q){{
       (s.vgc&&s.vgc.vol?'<div style="grid-column:1/-1"><span>🏠 Buyer activity (where people are buying):</span> <b>'+s.vgc.vol.toLocaleString()+'</b> sales in the last 12mo'+
         (s.vgc.vol_chg!=null?' <b class="'+(s.vgc.vol_chg>0?'hit':(s.vgc.vol_chg<0?'warn-flag':''))+'">('+(s.vgc.vol_chg>0?'+':'')+s.vgc.vol_chg+'% vs prior yr)</b>':'')+
         '<span class="sub2"> — actual transaction volume from the NSW land registry; rising = more buyers active here.</span></div>':'')+
-      (s.yn?'<div style="grid-column:1/-1"><span>💰 Yield now (price-adjusted):</span> '+
+      (s.yn?'<div style="grid-column:1/-1"><span>💰 Yield now (price + rent adjusted):</span> '+
         '<b>house</b> <b class="'+(s.yn[1]?'hit':'warn-flag')+'">~'+s.yn[0]+'% '+(s.yn[1]?'✓':'✗')+'</b>'+
         (s.ynt?' · <b>townhouse</b> <b class="'+(s.ynt[1]?'hit':'warn-flag')+'">~'+s.ynt[0]+'% '+(s.ynt[1]?'✓':'✗')+'</b>':'')+
         ' <span class="sub2">vs your 4.5% target</span>'+
-        '<span class="sub2"> — Census-2021 market rent ÷ the <b>current</b> price ('+
-        (s.yn[3]==='est.'?'ABS nowcast — no VG sold-price match for this suburb':((s.yn[3]==='VG≈'?'VG component match':'VG sold')+(s.yn[2]?' · '+s.yn[2]:'')))+
-        '): the 2024 yield re-based on how prices have actually moved. Only the price side is current — rent is still 2021, so yields read low everywhere; treat ✓/✗ as relative.</span></div>':'')+
+        '<span class="sub2"> — rent ÷ the <b>current</b> price ('+
+        (s.yn[3]==='est.'?'ABS nowcast — no VG sold-price match here':((s.yn[3]==='VG≈'?'VG component match':'VG sold')+(s.yn[2]?' · '+s.yn[2]:'')))+
+        '), rent = '+
+        (s.yn[4]==='bond'?'<b class="hit">current market rent</b>'+(s.yn[5]?' ('+s.yn[5]+', state bond data)':''):'Census-2021 + market uplift (no current-rent feed for this state yet)')+
+        '. '+(s.yn[4]==='bond'?'Both sides current.':'Only price is current — the 2021 rent reads low, so treat ✓/✗ as relative.')+'</span></div>':'')+
       '<div style="grid-column:1/-1;margin-top:4px"><span>🔎 Current sold prices (any state):</span> '+
         '<a target="_blank" rel="noopener" href="'+soldLink(s)+'">realestate.com.au →</a> · '+
         '<a target="_blank" rel="noopener" href="'+domainSoldLink(s)+'">Domain →</a>'+
