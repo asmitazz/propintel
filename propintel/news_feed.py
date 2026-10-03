@@ -32,6 +32,7 @@ FEEDS = [
     ("RenewEconomy", "https://reneweconomy.com.au/feed/"),
     ("Sourceable", "https://sourceable.net/feed/"),
     ("realestate.com.au News", "https://www.realestate.com.au/news/feed/"),
+    ("Your Investment Property", "https://www.yourinvestmentpropertymag.com.au/feed/"),
     ("RBA", "https://www.rba.gov.au/rss/rss-cb-media-releases.xml"),
 ]
 
@@ -98,7 +99,9 @@ def _find(item, *suffixes):
 def _parse_feed(source: str, xml_text: str) -> list[dict]:
     out = []
     try:
-        root = ET.fromstring(xml_text)
+        # Some feeds (e.g. YIP) emit a BOM or leading CR/LF before the XML declaration, which
+        # makes a strict parser reject the whole document — strip it before parsing.
+        root = ET.fromstring(xml_text.lstrip("﻿ \t\r\n"))
     except Exception:
         return out
     nodes = [n for n in root.iter() if n.tag.split("}")[-1].lower() in ("item", "entry")]

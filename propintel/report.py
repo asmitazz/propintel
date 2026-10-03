@@ -625,15 +625,30 @@ def _live_news_section() -> str:
     if not p.exists():
         return ""
     data = json.loads(p.read_text())
-    items = data.get("items", [])[:30]
+    all_items = data.get("items", [])
     generated = data.get("generated", "")
+    # Round-robin across sources (each already newest-first) so every feed — including a
+    # newer one like Your Investment Property — is represented, not crowded out by whichever
+    # feed happened to publish most that day.
+    bysrc: dict = {}
+    for i in all_items:
+        bysrc.setdefault(i.get("source", ""), []).append(i)
+    items, r = [], 0
+    while len(items) < 30 and any(r < len(v) for v in bysrc.values()):
+        for v in bysrc.values():
+            if r < len(v):
+                items.append(v[r])
+                if len(items) >= 30:
+                    break
+        r += 1
     rows = ""
     for i in items:
         tags = "".join(f'<span class="chip">{t}</span>' for t in i.get("tags", []))
         fresh = ' <span class="hit" style="font-size:10px">NEW</span>' if i.get("first_seen") == generated else ""
         rows += (f'<div class="newsitem"><a href="{i["link"]}" target="_blank">{i["title"]}</a>{fresh}'
                  f'<div class="newsmeta"><span>{i["source"]}</span> {tags}</div></div>')
-    sources = "PM &amp; Cabinet · Treasury · Infrastructure Magazine · RenewEconomy · Sourceable · realestate.com.au"
+    sources = ("PM &amp; Cabinet · Treasury · Infrastructure Magazine · RenewEconomy · Sourceable · "
+               "realestate.com.au · <b>Your Investment Property</b>")
     return (f'<h2>Latest headlines — auto-pulled</h2>'
             f'<p class="sub">Property, infrastructure, funding &amp; jobs news pulled from public RSS feeds each morning ({sources}), '
             f'filtered for relevance and tagged by state. Last pulled <b>{generated}</b>. '
