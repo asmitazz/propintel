@@ -1580,6 +1580,10 @@ function raLink(s){{ var nm=coreName(s.n).replace(/\\s*\\([^)]*\\)/g,'').trim();
 // council-level (subscribing councils only), so — like the agent/hazard links — we deep-link
 // via a scoped search that lands on the relevant .id profile rather than pulling numbers.
 function idLink(s){{ var nm=coreName(s.n).replace(/\\s*\\([^)]*\\)/g,'').trim(); return 'https://www.google.com/search?q='+encodeURIComponent('site:id.com.au '+nm+' '+s.st+' community profile'); }}
+// Matusik Property Insights — Michael Matusik's settled-sales-based property research. He
+// writes regionally/thematically rather than per-suburb, so this scoped search surfaces any
+// of his Substack/site pieces touching this suburb or its region + state.
+function matusikLink(s){{ var nm=coreName(s.n).replace(/\\s*\\([^)]*\\)/g,'').trim(); return 'https://www.google.com/search?q='+encodeURIComponent('(site:matusik.substack.com OR site:matusik.com.au) '+nm+' '+s.st); }}
 // Current SOLD prices for a suburb, straight from realestate.com.au — actual recent sales,
 // current to today, every state (incl. WA, which has no free per-suburb sold feed). A link,
 // not scraping, and it keeps dollar figures off Sersi itself. Works from suburb + state.
@@ -1696,6 +1700,9 @@ function doLookup(q){{
       :'<div style="grid-column:1/-1;margin-top:4px"><span>📊 Area profile:</span> '+
         '<a target="_blank" rel="noopener" href="'+idLink(s)+'">Demographics &amp; population forecast · .id →</a>'+
         '<span class="sub2"> — free council-level community &amp; economic profiles + small-area forecasts from .id (informed decisions); this suburb\\'s council isn\\'t in .id\\'s free forecast set, so the link searches their site.</span></div>')+
+      '<div style="grid-column:1/-1;margin-top:4px"><span>🧠 Expert research (Matusik):</span> '+
+        '<a target="_blank" rel="noopener" href="'+matusikLink(s)+'">Michael Matusik on this area →</a>'+
+        '<span class="sub2"> — independent property research built on <b>settled sales</b> (ABS · CoreLogic · SQM · PriceFinder + demographics). He writes regionally, not per-suburb, so this searches his Substack &amp; site for pieces touching this area.</span></div>'+
       '</div></div>';
   }}).join('');
 }}
@@ -1736,7 +1743,8 @@ var CMP_ROWS=[
   {{l:'Economy', g:function(s){{return s.eb||'—';}}}},
   {{l:'Top industries', g:function(s){{return (s.i3&&s.i3.length)?s.i3.join(', '):'—';}}}},
   {{l:'⚠️ Hazard / amenity check', g:function(s){{return hazLink(s,'flood','🌊 Flood')+' · '+hazLink(s,'bush','🔥 Bushfire')+' · '+hazLink(s,'noise','🔊 Noise')+' · '+hazLink(s,'power','⚡ Power');}}}},
-  {{l:'🧑‍💼 Selling agents', g:function(s){{return '<a target="_blank" rel="noopener" href="'+raLink(s)+'">RateMyAgent →</a>';}}}}
+  {{l:'🧑‍💼 Selling agents', g:function(s){{return '<a target="_blank" rel="noopener" href="'+raLink(s)+'">RateMyAgent →</a>';}}}},
+  {{l:'🧠 Expert research', g:function(s){{return '<a target="_blank" rel="noopener" href="'+matusikLink(s)+'">Matusik →</a>';}}}}
 ];
 function renderCompare(){{
   var chips=document.getElementById('cmpChips'), tbl=document.getElementById('cmpTable');
