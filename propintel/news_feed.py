@@ -24,6 +24,7 @@ from .config import ROOT
 
 NEWS_FILE = ROOT / "data" / "news_feed.json"
 MAX_ITEMS = 90
+PER_SOURCE_CAP = 15      # keep at most this many newest items per source (anti-flood)
 
 FEEDS = [
     ("PM & Cabinet", "https://www.pm.gov.au/rss.xml"),
@@ -33,6 +34,7 @@ FEEDS = [
     ("Sourceable", "https://sourceable.net/feed/"),
     ("realestate.com.au News", "https://www.realestate.com.au/news/feed/"),
     ("Your Investment Property", "https://www.yourinvestmentpropertymag.com.au/feed/"),
+    ("Matusik Missive", "https://matusik.substack.com/feed"),
     ("RBA", "https://www.rba.gov.au/rss/rss-cb-media-releases.xml"),
 ]
 
@@ -50,6 +52,10 @@ RELEVANCE = re.compile(
 # "jobs"), so items from these BROAD feeds must additionally clear a domestic-property gate:
 # a concrete property/infrastructure term, OR an Australian location + a relevance hit.
 _BROAD_FEEDS = {"PM & Cabinet", "Treasury"}
+# Dedicated AU property publications: their entire editorial scope is property, and their
+# column titles ("The Monday Build", "We are measuring the wrong thing") carry no keyword,
+# so the generic RELEVANCE gate would wrongly drop them. They still clear the nav/noise guards.
+_PROPERTY_SOURCES = {"Your Investment Property", "Matusik Missive"}
 _NAV_TITLES = {"home", "news", "media", "media releases", "media centre", "media center",
                "latest news", "newsroom", "media release", "press releases", "speeches"}
 _STRICT = re.compile(
@@ -137,6 +143,8 @@ def _keep(source: str, title: str, desc: str) -> bool:
         return False
     if NOISE.search(title):                       # transcripts / pressers / remarks / photo-ops
         return False
+    if source in _PROPERTY_SOURCES:               # whole-publication property research — trust it
+        return True
     if source in _BROAD_FEEDS:
         # Judge broad government feeds on the TITLE only — their press-release descriptions
         # are boilerplate ("the Government is investing … in <state> … homes …") that trips
@@ -177,7 +185,17 @@ def fetch_all() -> dict:
     # e.g. PM & Cabinet foreign-affairs/sport items that predate the broad-feed gate)
     kept = [i for i in seen.values()
             if _keep(i.get("source", ""), i.get("title", ""), i.get("desc", ""))]
-    items = sorted(kept, key=lambda i: i.get("first_seen", ""), reverse=True)[:MAX_ITEMS]
+    kept.sort(key=lambda i: i.get("first_seen", ""), reverse=True)
+    # Cap per source BEFORE the global cap, so one prolific feed (e.g. Infrastructure Magazine)
+    # can't flood the store and push smaller sources (Matusik, YIP) out entirely.
+    per: dict = {}
+    balanced = []
+    for i in kept:
+        s = i.get("source", "")
+        per[s] = per.get(s, 0) + 1
+        if per[s] <= PER_SOURCE_CAP:
+            balanced.append(i)
+    items = sorted(balanced, key=lambda i: i.get("first_seen", ""), reverse=True)[:MAX_ITEMS]
     NEWS_FILE.write_text(json.dumps({"generated": today, "new_today": new_count, "items": items}, indent=1))
     return {"new_today": new_count, "total": len(items)}
 

@@ -648,7 +648,7 @@ def _live_news_section() -> str:
         rows += (f'<div class="newsitem"><a href="{i["link"]}" target="_blank">{i["title"]}</a>{fresh}'
                  f'<div class="newsmeta"><span>{i["source"]}</span> {tags}</div></div>')
     sources = ("PM &amp; Cabinet · Treasury · Infrastructure Magazine · RenewEconomy · Sourceable · "
-               "realestate.com.au · <b>Your Investment Property</b>")
+               "realestate.com.au · <b>Your Investment Property</b> · <b>Matusik Missive</b>")
     return (f'<h2>Latest headlines — auto-pulled</h2>'
             f'<p class="sub">Property, infrastructure, funding &amp; jobs news pulled from public RSS feeds each morning ({sources}), '
             f'filtered for relevance and tagged by state. Last pulled <b>{generated}</b>. '
