@@ -33,6 +33,7 @@ AFSA_PKG = ("https://data.gov.au/data/api/3/action/package_show?id="
             "4174f850-3d50-4b07-ae1d-4eb38e628bb4")
 ASIC_STATS = ("https://asic.gov.au/regulatory-resources/find-a-document/statistics/"
               "insolvency-statistics/")
+APRA_STATS = "https://www.apra.gov.au/quarterly-authorised-deposit-taking-institution-statistics"
 _MON = {m.lower(): i for i, m in enumerate(
     ["", "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"])}
 
@@ -168,6 +169,51 @@ def _insolvencies():
         return []
 
 
+def _apra_investor_share():
+    """APRA Quarterly ADI Property Exposures (Tab 1b, residential term loans by purpose) —
+    the INVESTOR share of the housing loan book = investment / (owner-occupied + investment),
+    quarterly. A rising share = demand being driven more by investors (speculative, late-cycle,
+    tends to unwind faster); a falling share = owner-occupier-led (buyers who live in the home,
+    don't sell on a dip — a steadier base). Source flagged by DwellDelta's data page. The xlsx
+    URL rotates each release, so resolve the latest 'property exposures statistics' file."""
+    try:
+        page = _get(APRA_STATS, timeout=30).text
+        m = re.search(r'href="([^"]*property%20exposures%20statistics[^"]*\.xlsx)"', page, re.I)
+        if not m:
+            return []
+        url = m.group(1)
+        if not url.startswith("http"):
+            url = "https://www.apra.gov.au" + url
+        import openpyxl
+        raw = _get(url, timeout=90).content
+        wb = openpyxl.load_workbook(io.BytesIO(raw), read_only=True, data_only=True)
+        rows = list(wb["Tab 1b"].iter_rows(values_only=True))
+        dcols = next(([(j, c) for j, c in enumerate(row) if isinstance(c, datetime)]
+                      for row in rows[:8]
+                      if sum(isinstance(c, datetime) for c in row) >= 4), None)
+        if not dcols:
+            return []
+
+        def _row(label):   # first row whose first cell is exactly this label (term-loans split)
+            return next((row for row in rows
+                         if row and isinstance(row[0], str) and row[0].strip().lower() == label), None)
+        oo, inv = _row("owner-occupied"), _row("investment")
+        if not oo or not inv:
+            return []
+        out = []
+        for j, d in dcols:
+            try:
+                o, i = float(oo[j]), float(inv[j])
+            except (TypeError, ValueError, IndexError):
+                continue
+            if o + i > 0:
+                out.append((d, round(i / (o + i) * 100, 2)))
+        out.sort(key=lambda x: x[0])
+        return out
+    except Exception:
+        return []
+
+
 def _asic_insolvencies():
     """ASIC Series 1 — companies entering external administration for the first time,
     monthly (the widely-quoted 'company insolvencies/bankruptcies' series). The xlsx URL
@@ -271,6 +317,7 @@ def build_macro() -> dict:
     unemp = _unemployment()
     insol = _insolvencies()
     asic = _asic_insolvencies()
+    apra = _apra_investor_share()
 
     inds = []
 
@@ -352,6 +399,26 @@ def build_macro() -> dict:
             "the highest in the world. It doesn't move much month to month, but because people are so stretched, "
             "any rise in rates or unemployment bites harder and faster than it would elsewhere.",
             votes=False, series_n=120)
+
+    if apra:
+        cur = apra[-1][1]
+        prior = next((v for d, v in reversed(apra) if (apra[-1][0] - d).days >= 330), None)
+        chg = (cur - prior) if prior is not None else None
+        st = ("headwind" if chg is not None and chg >= 0.3        # investor share rising = speculative
+              else "tailwind" if chg is not None and chg <= -0.3  # falling = owner-occupier-led
+              else "neutral")
+        move = _dir_word(st, up="rising", down="falling", flat="broadly flat")
+        add("investor_share", "Investor share of housing credit", "% of home loans",
+            "APRA Quarterly ADI Property Exposures (Tab 1b) · via DwellDelta", apra, st,
+            f"{cur:.1f}% ({chg:+.1f}pp/yr)" if chg is not None else f"{cur:.1f}%",
+            "Investor share of ADIs' housing loan book (investment ÷ owner-occupied + investment). "
+            "Rising = demand driven more by investors (speculative, late-cycle); falling = owner-occupier-"
+            "led (steadier). Context — it doesn't vote in the composite.",
+            "What share of home loans are going to <b>investors</b> rather than people buying to live in. "
+            "Owner-occupiers buy to live and rarely sell on a dip, so an owner-occupier-led market is steadier; "
+            "when the investor share climbs, more of the buying is speculative and can unwind faster. Right now "
+            f"it's <b>{move}</b> — investors are about <b>{cur:.0f}%</b> of the loan book.",
+            votes=False, series_n=40)
 
     # Staleness: any indicator trailing the freshest by >~3 months is badged and drops its vote.
     if inds:
