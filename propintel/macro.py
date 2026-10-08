@@ -214,6 +214,49 @@ def _apra_investor_share():
         return []
 
 
+def _apra_arrears():
+    """APRA Quarterly ADI Performance (Tab 1d, asset quality) — NON-PERFORMING loans as a share
+    of gross loans = non-performing ÷ gross loans & advances, quarterly. The post-2022 standard
+    gauge of bank bad loans (90+ days past due or impaired). It's ALL ADI loans, not housing-
+    only, but housing is ~two-thirds of the book, so it's the closest free read on mortgage
+    stress/arrears. Rising = more households behind on payments → forced-sale risk. (The older
+    'past due to loans' ratio was discontinued in the 2022 reporting change.)"""
+    try:
+        page = _get(APRA_STATS, timeout=30).text
+        m = re.search(r'href="([^"]*institution%20performance[^"]*\.xlsx)"', page, re.I)
+        if not m:
+            return []
+        url = m.group(1)
+        if not url.startswith("http"):
+            url = "https://www.apra.gov.au" + url
+        import openpyxl
+        wb = openpyxl.load_workbook(io.BytesIO(_get(url, timeout=90).content), read_only=True, data_only=True)
+        rows = list(wb["Tab 1d"].iter_rows(values_only=True))
+        _isdate = lambda c: bool(isinstance(c, str) and re.match(r"[A-Z][a-z]{2} \d{4}", c.strip()))
+        drow = next((rows[ri] for ri in range(2, 6) if sum(_isdate(c) for c in rows[ri]) >= 4), None)
+
+        def _row(label):
+            return next((row for row in rows if row and isinstance(row[0], str) and row[0].strip().lower() == label), None)
+        npf, gross = _row("non-performing"), _row("gross loans and advances")
+        if not drow or not npf or not gross:
+            return []
+        out = []
+        for j, c in enumerate(drow):
+            if not _isdate(c):
+                continue
+            try:
+                n, g = float(npf[j]), float(gross[j])
+            except (TypeError, ValueError, IndexError):
+                continue
+            mi = _MON.get(c.strip()[:3].lower())
+            if mi and g > 0:
+                out.append((datetime(int(c.strip()[-4:]), mi, 1), round(n / g * 100, 2)))
+        out.sort(key=lambda x: x[0])
+        return out
+    except Exception:
+        return []
+
+
 def _asic_insolvencies():
     """ASIC Series 1 — companies entering external administration for the first time,
     monthly (the widely-quoted 'company insolvencies/bankruptcies' series). The xlsx URL
@@ -314,10 +357,12 @@ def build_macro() -> dict:
     cash = _rba_series("f1.1", "FIRMMCRT")
     mort = _rba_series("f6", "FLRHOOTA")
     dti = _rba_series("e2", "BHFDDIT")
+    cpi = _rba_series("g1", "GCPIAGYP")        # headline year-ended CPI inflation
     unemp = _unemployment()
     insol = _insolvencies()
     asic = _asic_insolvencies()
     apra = _apra_investor_share()
+    arrears = _apra_arrears()
 
     inds = []
 
@@ -354,6 +399,20 @@ def build_macro() -> dict:
             "What a typical home loan actually costs. When this is higher, monthly repayments are bigger and "
             "people can borrow less — so fewer buyers can compete and demand softens. It follows the cash rate.",
             votes=False)
+    if cpi:
+        cur = cpi[-1][1]
+        st = ("headwind" if cur >= 3.2 else "tailwind" if cur <= 2.5 else "neutral")
+        band = ("<b>above</b> the RBA's 2–3% target" if cur > 3.0 else
+                "<b>below</b> the 2–3% target" if cur < 2.0 else "<b>within</b> the 2–3% target")
+        add("cpi", "Inflation (CPI, year-ended)", "%", "Reserve Bank of Australia / ABS (G1, GCPIAGYP)", cpi, st,
+            f"{cur:.1f}% ({band.replace('<b>','').replace('</b>','')})",
+            "Headline consumer-price inflation, year-ended. It decides where the cash rate goes next: above "
+            "the 2–3% target keeps the RBA cautious (fewer/later cuts = a headwind); back within/below target "
+            "opens room to cut (a tailwind). Context — the cash rate carries the actual vote.",
+            "How fast the cost of living is rising. It's the single thing the Reserve Bank watches to set interest "
+            f"rates: while it sits {band}, the RBA is less willing to cut — and rate cuts are the main fuel for "
+            "borrowing power and prices. So high inflation now usually means rate relief (and a price recovery) is "
+            "further off.", votes=False, series_n=60)
     if unemp:
         st, gap = _sahm(unemp)
         near = "and it's now close to the level that has historically warned of a recession" if st == "neutral" \
@@ -418,6 +477,23 @@ def build_macro() -> dict:
             "Owner-occupiers buy to live and rarely sell on a dip, so an owner-occupier-led market is steadier; "
             "when the investor share climbs, more of the buying is speculative and can unwind faster. Right now "
             f"it's <b>{move}</b> — investors are about <b>{cur:.0f}%</b> of the loan book.",
+            votes=False, series_n=40)
+    if arrears:
+        cur = arrears[-1][1]
+        prior = next((v for d, v in reversed(arrears) if (arrears[-1][0] - d).days >= 330), None)
+        chg = (cur - prior) if prior is not None else None
+        st = ("headwind" if chg is not None and chg >= 0.05       # bad loans rising = stress building
+              else "tailwind" if chg is not None and chg <= -0.05 else "neutral")
+        move = _dir_word(st, up="rising", down="easing", flat="broadly flat")
+        add("arrears", "Bank loan arrears (non-performing)", "% of loans",
+            "APRA Quarterly ADI Performance (Tab 1d) · via DwellDelta", arrears, st,
+            f"{cur:.2f}% ({chg:+.2f}pp/yr)" if chg is not None else f"{cur:.2f}%",
+            "Non-performing loans (90+ days past due or impaired) as a share of all ADI loans — the standard "
+            "bank-stress gauge. Housing is ~⅔ of the book, so it tracks mortgage stress closely (it isn't "
+            "housing-only). Rising = more borrowers behind → forced-sale risk. Context, doesn't vote.",
+            "The share of bank loans where borrowers have fallen behind (90+ days) or gone bad. When this climbs, "
+            "more households are in real trouble and some are forced to sell — which adds supply and drags prices. "
+            f"It's a low <b>~{cur:.1f}%</b> right now and <b>{move}</b> versus a year ago.",
             votes=False, series_n=40)
 
     # Staleness: any indicator trailing the freshest by >~3 months is badged and drops its vote.
