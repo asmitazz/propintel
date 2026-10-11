@@ -21,10 +21,13 @@ from __future__ import annotations
 import calendar
 import csv
 import io
+import json
 import re
 from datetime import datetime
 
 from curl_cffi import requests as cf
+
+from .config import ROOT
 
 RBA = "https://www.rba.gov.au/statistics/tables/csv/{}-data.csv"
 ABS_LF = ("https://data.api.abs.gov.au/rest/data/LF/M13.3.1599.20.AUS.M"
@@ -121,10 +124,29 @@ def _abs_sdmx(url):
 
 def _household_spending():
     """ABS Household Spending Indicator (HSI_M) — total, Australia, seasonally adjusted,
-    through-the-year % change. The free consumer-DEMAND read; the Westpac/Melbourne Institute
-    consumer-SENTIMENT index is proprietary (PDF) and can't be auto-pulled."""
+    through-the-year % change. The free consumer-DEMAND read (pairs with the sentiment index,
+    which is how people FEEL vs. what they actually spend)."""
     try:
         return _abs_sdmx(ABS_HSI)
+    except Exception:
+        return []
+
+
+def _consumer_sentiment():
+    """Westpac–Melbourne Institute Consumer Sentiment Index, read from the manually-maintained
+    data/consumer_sentiment.json. The full back-series is a paid Melbourne Institute (CASiE)
+    licence, but the monthly headline is published free in the Westpac release — so this one
+    indicator is updated by hand each month (see the file's `note`), not auto-fetched.
+    100 = neutral (optimists balance pessimists); long-run average ~100."""
+    try:
+        d = json.loads((ROOT / "data" / "consumer_sentiment.json").read_text())
+        out = []
+        for ym, val in d.get("series", []):
+            dt = _pdate(ym)
+            if dt is not None and val is not None:
+                out.append((dt, round(float(val), 1)))
+        out.sort(key=lambda x: x[0])
+        return out
     except Exception:
         return []
 
@@ -391,6 +413,7 @@ def build_macro() -> dict:
     cpi = _rba_series("g1", "GCPIAGYP")        # headline year-ended CPI inflation
     hvtinc = [(d, v / 100) for d, v in _rba_series("e2", "BHFHDI")]   # housing value ÷ income, as ×
     spending = _household_spending()           # ABS consumer spending, through-the-year %
+    sentiment = _consumer_sentiment()          # Westpac–Melbourne Institute, manual monthly
     unemp = _unemployment()
     insol = _insolvencies()
     asic = _asic_insolvencies()
@@ -452,12 +475,36 @@ def build_macro() -> dict:
         move = _dir_word(st, up="growing solidly", down="soft", flat="moderate")
         add("spending", "Consumer spending (ABS)", "% YoY", "ABS Household Spending Indicator (total, SA)",
             spending, st, f"{cur:+.1f}% YoY",
-            "Household spending, through-the-year. A free read on consumer demand (the Westpac/Melbourne "
-            "Institute consumer-sentiment index is proprietary and can't be auto-pulled). Solid spending = "
-            "confident households and firmer housing demand; a pull-back is an early warning. Context, no vote.",
+            "Household spending, through-the-year — what people actually do with their money, the companion to "
+            "the sentiment index (how they feel). Solid spending = confident households and firmer housing "
+            "demand; a pull-back is an early warning. Context, no vote.",
             f"How much households are actually spending versus a year ago — a real-money read on confidence. "
             f"When spending holds up, buyers are comfortable and housing demand stays firmer; when it stalls, "
             f"people pull their horns in and demand softens. It's currently <b>{move}</b> at <b>{cur:+.1f}%</b>.",
+            votes=False, series_n=48)
+    if sentiment:
+        cur = sentiment[-1][1]
+        st = ("tailwind" if cur >= 100 else "headwind" if cur < 90 else "neutral")
+        mood = ("<b>optimistic</b> (above the neutral 100 line)" if cur >= 100 else
+                "<b>deeply pessimistic</b>" if cur < 85 else
+                "<b>pessimistic</b>" if cur < 95 else "<b>cautious</b> (near the neutral 100 line)")
+        # note the feel-vs-spend gap when both are present
+        gap = ""
+        if spending and spending[-1][1] >= 3.0 and cur < 95:
+            gap = (f" Worth noting: households say they feel gloomy, yet actual spending is still "
+                   f"growing (<b>{spending[-1][1]:+.1f}%</b>) — what people do is holding up better than how "
+                   "they say they feel.")
+        add("sentiment", "Consumer sentiment (Westpac–MI)", "index", "Westpac–Melbourne Institute (headline, manual monthly)",
+            sentiment, st, f"{cur:.1f} ({'optimists' if cur >= 100 else 'pessimists'} ahead; 100 = neutral)",
+            "The Westpac–Melbourne Institute Consumer Sentiment Index. 100 = optimists and pessimists balance; "
+            "below 100 means pessimists outnumber optimists. It leads actual spending and big-ticket decisions "
+            "(including buying a home) by a few months, so it's an early read on housing demand. The monthly "
+            "headline is free (the full back-series is a paid licence), so this one is updated by hand each month. "
+            "Context, no vote.",
+            f"A monthly survey of how confident households feel about their finances and the economy, where 100 is "
+            f"the dividing line between optimists and pessimists. At <b>{cur:.1f}</b> consumers are {mood}. Confidence "
+            "tends to move a few months ahead of what people actually do — when it's this low, buyers are more "
+            "hesitant to commit to a purchase as big as a home, which weighs on demand until it recovers." + gap,
             votes=False, series_n=48)
     if hvtinc:
         cur = hvtinc[-1][1]

@@ -1,0 +1,10 @@
+{
+  "source": "Westpac–Melbourne Institute Consumer Sentiment Index",
+  "note": "100 = neutral (equal optimists/pessimists); long-run average ~100. The full time series is a paid Melbourne Institute (CASiE) licence, but the monthly headline is published free in the Westpac release — update this file each month from https://www.westpaciq.com.au/economics",
+  "updated": "2026-10",
+  "series": [
+    ["2026-08", 88.9],
+    ["2026-09", 84.4],
+    ["2026-10", 80.4]
+  ]
+}

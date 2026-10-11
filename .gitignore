@@ -14,6 +14,7 @@ data/*
 !data/rents.json
 !data/nsw_sales.json
 !data/news_feed.json
+!data/consumer_sentiment.json
 # news_feed.json is a committed SEED: GitHub Actions' datacenter IPs can't reach several
 # commercial RSS feeds (YIP, realestate, RenewEconomy, Sourceable), so the CI run alone would
 # show only the gov/infra feeds. Committing the full local pull keeps the News tab multi-source
@@ -45,3 +46,6 @@ venv/
 
 # Local Claude Code config — not for the public repo
 .claude/
+
+# Private Instagram reel work (ledger, voice, research) — never publish
+reels/
