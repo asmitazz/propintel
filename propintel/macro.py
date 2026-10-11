@@ -29,6 +29,9 @@ from curl_cffi import requests as cf
 RBA = "https://www.rba.gov.au/statistics/tables/csv/{}-data.csv"
 ABS_LF = ("https://data.api.abs.gov.au/rest/data/LF/M13.3.1599.20.AUS.M"
           "?startPeriod=2015-01&dimensionAtObservation=AllDimensions")
+# Household Spending Indicator: Total · Australia · seasonally adj · through-the-year % change.
+ABS_HSI = ("https://data.api.abs.gov.au/rest/data/HSI_M/9.TOT.CUR.20.AUS.M"
+           "?startPeriod=2020-01&dimensionAtObservation=AllDimensions")
 AFSA_PKG = ("https://data.gov.au/data/api/3/action/package_show?id="
             "4174f850-3d50-4b07-ae1d-4eb38e628bb4")
 ASIC_STATS = ("https://asic.gov.au/regulatory-resources/find-a-document/statistics/"
@@ -94,6 +97,34 @@ def _get(url, timeout=25, headers=None):
 def _rba_series(table, sid):
     try:
         return _parse_rba(_get(RBA.format(table)).text, sid)
+    except Exception:
+        return []
+
+
+def _abs_sdmx(url):
+    """Parse a single-series ABS Data-API SDMX-JSON response (AllDimensions) → [(date, value)]."""
+    d = _get(url, headers={"Accept": "application/vnd.sdmx.data+json"}).json()
+    struct = d["data"]["structures"][0]
+    dims = struct["dimensions"]["observation"]
+    time_dim = next(x for x in dims if x["id"] == "TIME_PERIOD")
+    periods = [v["id"] for v in time_dim["values"]]
+    ti = dims.index(time_dim)
+    out = []
+    for key, val in d["data"]["dataSets"][0]["observations"].items():
+        idx = int(key.split(":")[ti])
+        dt = _pdate(periods[idx])
+        if dt is not None and val and val[0] is not None:
+            out.append((dt, round(float(val[0]), 2)))
+    out.sort(key=lambda x: x[0])
+    return out
+
+
+def _household_spending():
+    """ABS Household Spending Indicator (HSI_M) — total, Australia, seasonally adjusted,
+    through-the-year % change. The free consumer-DEMAND read; the Westpac/Melbourne Institute
+    consumer-SENTIMENT index is proprietary (PDF) and can't be auto-pulled."""
+    try:
+        return _abs_sdmx(ABS_HSI)
     except Exception:
         return []
 
@@ -358,6 +389,8 @@ def build_macro() -> dict:
     mort = _rba_series("f6", "FLRHOOTA")
     dti = _rba_series("e2", "BHFDDIT")
     cpi = _rba_series("g1", "GCPIAGYP")        # headline year-ended CPI inflation
+    hvtinc = [(d, v / 100) for d, v in _rba_series("e2", "BHFHDI")]   # housing value ÷ income, as ×
+    spending = _household_spending()           # ABS consumer spending, through-the-year %
     unemp = _unemployment()
     insol = _insolvencies()
     asic = _asic_insolvencies()
@@ -413,6 +446,34 @@ def build_macro() -> dict:
             f"rates: while it sits {band}, the RBA is less willing to cut — and rate cuts are the main fuel for "
             "borrowing power and prices. So high inflation now usually means rate relief (and a price recovery) is "
             "further off.", votes=False, series_n=60)
+    if spending:
+        cur = spending[-1][1]
+        st = ("tailwind" if cur >= 3.0 else "headwind" if cur <= 1.0 else "neutral")
+        move = _dir_word(st, up="growing solidly", down="soft", flat="moderate")
+        add("spending", "Consumer spending (ABS)", "% YoY", "ABS Household Spending Indicator (total, SA)",
+            spending, st, f"{cur:+.1f}% YoY",
+            "Household spending, through-the-year. A free read on consumer demand (the Westpac/Melbourne "
+            "Institute consumer-sentiment index is proprietary and can't be auto-pulled). Solid spending = "
+            "confident households and firmer housing demand; a pull-back is an early warning. Context, no vote.",
+            f"How much households are actually spending versus a year ago — a real-money read on confidence. "
+            f"When spending holds up, buyers are comfortable and housing demand stays firmer; when it stalls, "
+            f"people pull their horns in and demand softens. It's currently <b>{move}</b> at <b>{cur:+.1f}%</b>.",
+            votes=False, series_n=48)
+    if hvtinc:
+        cur = hvtinc[-1][1]
+        prior = next((v for d, v in reversed(hvtinc) if (hvtinc[-1][0] - d).days >= 330), None)
+        chg = (cur - prior) if prior is not None else None
+        st = ("headwind" if chg is not None and chg >= 0.08 else "tailwind" if chg is not None and chg <= -0.08 else "neutral")
+        move = _dir_word(st, up="still stretching", down="easing back", flat="broadly flat")
+        add("hv_income", "Housing value vs income", "× income", "Reserve Bank of Australia (E2, housing assets ÷ income)",
+            hvtinc, st, f"{cur:.1f}× income ({chg:+.1f}×/yr)" if chg is not None else f"{cur:.1f}× income",
+            "Total value of Australia's homes ÷ household disposable income (RBA E2). Near record highs. This "
+            "is the 'is land/housing sustainable?' gauge — when housing is this stretched vs income, prices lean "
+            "on cheap credit and sentiment, with less room to rise and more to fall on a shock. Context, no vote.",
+            f"How dear housing is compared with what households earn — about <b>{cur:.1f} times</b> a year's "
+            "income nationally, near the highest on record. The higher this sits, the more prices depend on cheap "
+            "borrowing to stay up, and the less headroom there is for further gains. It's "
+            f"<b>{move}</b> versus a year ago.", votes=False, series_n=100)
     if unemp:
         st, gap = _sahm(unemp)
         near = "and it's now close to the level that has historically warned of a recession" if st == "neutral" \
