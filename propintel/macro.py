@@ -87,6 +87,15 @@ def _series(pairs, n=132):
     return [[d.strftime("%Y-%m"), round(v, 2)] for d, v in tail]
 
 
+def _month_end(pairs):
+    """Collapse a DAILY series to one point per calendar month (last obs wins — pairs are
+    sorted ascending), so daily RBA tables chart on the same monthly basis as the rest."""
+    out = {}
+    for d, v in pairs:
+        out[(d.year, d.month)] = (d, v)
+    return [out[k] for k in sorted(out)]
+
+
 def _get(url, timeout=25, headers=None):
     """Hard-capped fetch — a plain curl timeout was observed not to fire on a 0-byte hang
     (this runs in the daily pipeline), so cap it with a future that always returns."""
@@ -409,6 +418,8 @@ def build_macro() -> dict:
     Stale indicators (>~3 months behind the freshest) are badged and drop out of the vote."""
     cash = _rba_series("f1.1", "FIRMMCRT")
     mort = _rba_series("f6", "FLRHOOTA")
+    b10 = _month_end(_rba_series("f2", "FCMYGBAG10D"))   # 10yr Commonwealth Govt bond (daily→monthly)
+    b2 = _month_end(_rba_series("f2", "FCMYGBAG2D"))      # 2yr bond — near-term rate-expectations read
     dti = _rba_series("e2", "BHFDDIT")
     cpi = _rba_series("g1", "GCPIAGYP")        # headline year-ended CPI inflation
     hvtinc = [(d, v / 100) for d, v in _rba_series("e2", "BHFHDI")]   # housing value ÷ income, as ×
@@ -455,6 +466,40 @@ def build_macro() -> dict:
             "What a typical home loan actually costs. When this is higher, monthly repayments are bigger and "
             "people can borrow less — so fewer buyers can compete and demand softens. It follows the cash rate.",
             votes=False)
+    if b10:
+        st, chg = _dir_state(b10, 12, up_is="headwind")
+        spread = round(b10[-1][1] - cash[-1][1], 2) if cash else None
+        if spread is None:
+            shape = curve = ""
+        elif spread < 0:
+            shape, curve = f"spread {spread:+.1f}pp vs cash (inverted — caution)", "an inverted curve, historically a caution sign"
+        elif spread < 0.5:
+            shape, curve = f"spread {spread:+.1f}pp vs cash (flat)", "a flat curve"
+        else:
+            shape, curve = f"spread {spread:+.1f}pp vs cash (steep)", "a normal, upward-sloping curve"
+        move = _dir_word(st, up="rising", down="falling", flat="steady")
+        if st == "headwind":
+            tail_txt = ("When long yields rise like this, markets aren't betting on cheap money returning soon, so "
+                        "the broader cost of borrowing stays high — a headwind for prices until it turns.")
+        elif st == "tailwind":
+            tail_txt = ("Falling long yields mean markets are starting to price lower rates and inflation ahead, "
+                        "which tends to ease the cost of borrowing and support prices with a lag.")
+        else:
+            tail_txt = "A steady long yield means the market sees no big change in the rate and inflation outlook."
+        add("bonds", "10-year bond yield", "%", "Reserve Bank of Australia (F2, FCMYGBAG10D)", b10, st,
+            f"{b10[-1][1]:.1f}% · {shape}" if shape else f"{b10[-1][1]:.1f}%",
+            "The yield on 10-year Australian Government bonds — the market's own read on where interest rates and "
+            "inflation sit over the long run (it moves ahead of the RBA). Fixed home loans here are mostly 1–5 "
+            "year terms priced off shorter-term swap rates, so the 10yr isn't their direct anchor — it's the "
+            "long-run expectations gauge that sets the tone for the whole cost of capital. Rising = markets "
+            "expect higher-for-longer; falling = they're pricing relief. The term spread (10yr minus the cash "
+            "rate) is the yield-curve read: a flat or inverted (negative) spread has historically been a caution "
+            "sign, though it's noisier in Australia than in the US. Context, no vote.",
+            f"What the bond market expects interest rates and inflation to do over the long run — the base tone "
+            f"for the whole cost of borrowing. It's currently <b>{move}</b> at <b>{b10[-1][1]:.1f}%</b>" +
+            (f", <b>{abs(spread):.1f}pp {'above' if spread >= 0 else 'below'}</b> the cash rate ({curve})"
+             if spread is not None else "") + ". " + tail_txt,
+            votes=False, series_n=120)
     if cpi:
         cur = cpi[-1][1]
         st = ("headwind" if cur >= 3.2 else "tailwind" if cur <= 2.5 else "neutral")
@@ -630,17 +675,50 @@ def build_macro() -> dict:
                  "historically supported firmer demand and rising prices. Conditions like these tend to reward "
                  "getting in earlier rather than waiting.")
     elif n:
+        u_state = next((i["state"] for i in inds if i["key"] == "unemployment"), None)
+        jobs_clause = ("but jobs and household finances are still holding up" if u_state == "tailwind"
+                       else "and the jobs market is now softening too")
         read = (f"Signals are mixed ({head} headwind / {tail} tailwind of {n}) — historically a "
                 "transitional backdrop with no clear cycle lean.")
         plain = ("In plain terms: the market isn't clearly rising or falling. Interest rates are the main "
-                 "pressure, but jobs and household finances are still holding up — so it's more a 'watch closely "
-                 "and buy well' backdrop than a clear signal to pile in or sit out.")
+                 f"pressure, {jobs_clause} — so it's more a 'watch closely and buy well' backdrop than a clear "
+                 "signal to pile in or sit out.")
     else:
         read, plain = "", ""
 
+    # Stagflation watch: inflation still hot AND unemployment rising together. Then the RBA's two
+    # mandates (low inflation, full employment) pull opposite ways, so a rising jobless rate does not
+    # reliably buy rate cuts. Fires only when both conditions hold (otherwise silent).
+    stag, stag_note = False, ""
+    cpi_hot = bool(cpi and cpi[-1][1] >= 3.2)
+    ug = _sahm(unemp)[1] if unemp else None
+    unemp_rising = ug is not None and ug >= 0.2
+    if cpi_hot and unemp_rising:
+        stag = True
+        cpi_as = cpi[-1][0].strftime("%b %Y")
+        un_as = unemp[-1][0].strftime("%b %Y")
+        lvl = (f"has crossed the recession-warning level (+{ug:.2f}pp above its 12-month low, {un_as})"
+               if ug >= 0.5 else
+               f"is nearing the recession-warning level — +{ug:.2f}pp above its 12-month low ({un_as}), not yet triggered")
+        bond_bit = ""
+        if b2 and cash:
+            sp2 = round(b2[-1][1] - cash[-1][1], 2)
+            if sp2 > 0:
+                bond_bit = (f" Bond markets agree relief isn't imminent — the 2-year yield ({b2[-1][1]:.1f}%) sits "
+                            f"{sp2:.1f}pp above the cash rate, so no near-term cuts are priced.")
+            else:
+                bond_bit = (f" Bond markets, by contrast, are pricing cuts — the 2-year yield ({b2[-1][1]:.1f}%) is "
+                            f"below the cash rate.")
+        stag_note = (f"Stagflation watch: inflation is still above target (CPI {cpi[-1][1]:.1f}% year-ended to "
+                     f"{cpi_as}) while unemployment {lvl}. When "
+                     "these two rise together the RBA can't freely cut without re-stoking inflation, so a rising "
+                     "jobless rate doesn't reliably mean rate relief is coming — the 1970s-style bind. A reason to "
+                     "watch inflation, bond yields and unemployment together, not one as the other's trigger." + bond_bit)
+
     return {
         "indicators": inds,
-        "composite": {"headwinds": head, "tailwinds": tail, "n": n, "read": read, "plain": plain},
+        "composite": {"headwinds": head, "tailwinds": tail, "n": n, "read": read, "plain": plain,
+                      "stagflation": stag, "stagflation_note": stag_note},
         "asof": max((i["asof"] for i in inds), key=lambda s: datetime.strptime(s, "%b %Y"), default=""),
     }
 

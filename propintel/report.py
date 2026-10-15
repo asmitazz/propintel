@@ -320,6 +320,7 @@ def _macro_section(macro: dict) -> str:
     unemployment, insolvencies); the mortgage rate is context and household debt an amplifier.</p>
     <div class="banner"><b>Where the cycle sits (as at {macro.get("asof","")}):</b> {comp.get("read","—")}
     <br><span style="display:inline-block;margin-top:6px">{comp.get("plain","")}</span>
+    {('<br><span class="stag-flag">⚠ ' + comp.get("stagflation_note","") + '</span>') if comp.get("stagflation") else ''}
     <br><span class="sub2">General information from public data, not a prediction or personal advice (see footer).</span></div>
     <div class="macro-grid">{cards}</div>'''
 
@@ -1403,6 +1404,7 @@ h3.ph::after{{content:"";flex:1;height:1px;background:var(--line)}}
 .macro-method{{margin-top:6px}} .macro-method summary{{font-family:var(--mono);font-size:11px;letter-spacing:.03em;color:var(--muted)}}
 .macro-card .chart{{border:none;padding:0;background:transparent;margin:2px 0}}
 .macro-card .src{{margin-top:8px;font-family:var(--mono);font-size:10.5px;color:var(--muted)}}
+.stag-flag{{display:block;margin-top:10px;padding:9px 12px;border-left:3px solid var(--bad);background:rgba(200,60,60,.07);border-radius:4px;font-size:13px;line-height:1.5}}
 .chart{{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px 16px}}
 .chart-t{{font-size:14px;font-weight:700;margin-bottom:2px}} .chart-s{{font-size:12px;color:var(--muted);margin-bottom:8px}}
 .chart svg{{width:100%;height:auto}}
