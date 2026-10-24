@@ -416,7 +416,7 @@ def build_macro() -> dict:
     Only THREE indicators vote (rates via the cash rate, unemployment, insolvencies); the
     mortgage rate is shown as context and household debt as an amplifier, neither votes.
     Stale indicators (>~3 months behind the freshest) are badged and drop out of the vote."""
-    cash = _rba_series("f1.1", "FIRMMCRT")
+    cash = _month_end(_rba_series("f1", "FIRMMCRTD"))   # DAILY cash-rate TARGET (current level, not the lagging monthly avg)
     mort = _rba_series("f6", "FLRHOOTA")
     b10 = _month_end(_rba_series("f2", "FCMYGBAG10D"))   # 10yr Commonwealth Govt bond (daily→monthly)
     b2 = _month_end(_rba_series("f2", "FCMYGBAG2D"))      # 2yr bond — near-term rate-expectations read
@@ -453,7 +453,7 @@ def build_macro() -> dict:
                  "usually cools." if st == "headwind" else "It's been <b>falling</b>, so loans get cheaper, buyers can "
                  "borrow more, and prices usually firm up (with a lag)." if st == "tailwind" else "It's been roughly "
                  "<b>flat</b> — no fresh push either way."))
-        add("cash", "RBA cash rate (monthly avg)", "%", "Reserve Bank of Australia (F1.1)", cash, st,
+        add("cash", "RBA cash rate (target)", "%", "Reserve Bank of Australia (F1, cash rate target)", cash, st,
             f"{chg:+.2f}pp / 12mo" if chg is not None else "—",
             "The policy lever: rate cuts lift borrowing capacity and prices tend to follow with a lag; "
             "hikes do the reverse. This is the voting 'interest rates' signal.", plain, votes=True)
